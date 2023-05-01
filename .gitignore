@@ -2,3 +2,4 @@ target/*
 .tmp/*
 Cargo.lock
 service_client.json
+run.sh

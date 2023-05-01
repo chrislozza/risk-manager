@@ -1,3 +1,4 @@
+use apca::api::v2::{order, position};
 use apca::{ApiInfo, Client};
 use log::{error, info, warn};
 use std::error::Error;
@@ -16,6 +17,11 @@ struct Services {
     mktdata: MktData,
     trading: Trading,
 }
+
+//struct RiskManagement {
+//    locker: Locker,
+//    risk: RiskCalculator
+//}
 
 pub struct Platform {
     client: Client,
@@ -36,26 +42,53 @@ impl Platform {
         }
     }
 
-    pub async fn startup(&mut self, is_live: bool) -> Result<(), Box<dyn Error + Send + Sync>> {
-        let account = AccountDetails::new(&self.client).await;
-        info!("Account deets: {:?}", account);
-        let mktdata = MktData::new(&self.client, is_live).await;
-        info!("MktData deets: {:?}", mktdata);
-        let trading = Trading::new(&self.client, is_live).await;
-        info!("Trading deets: {:?}", trading);
+    pub async fn startup(&mut self) -> Result<(), Box<dyn Error + Send + Sync>> {
+        let mut account = AccountDetails::new();
+        let mktdata = MktData::new();
+        let mut trading = Trading::new();
+
+        account.startup(&self.client).await;
+        trading.startup(&self.client).await;
+        info!("To loop Here");
+        mktdata
+            .startup(&self.client, vec!["APPL".to_string()])
+            .await;
+        info!("To loop Here");
 
         Ok(self.services = Some(Services {
             account,
             mktdata,
-            trading
+            trading,
         }))
     }
 
-    pub async fn poll(&self) -> bool {
+    pub async fn poll(&mut self) -> bool {
         if self.services.is_none() {
             info!("Startup not complete");
             return false;
         }
+        info!("Sending order");
+        match self
+            .services
+            .as_mut()
+            .unwrap()
+            .trading
+            .create_position(
+                &self.client,
+                "APPL".to_string(),
+                170.00,
+                10,
+                order::Side::Buy,
+            )
+            .await
+        {
+            Err(err) => {
+                error!("Failed to place first order {}", err);
+                return false;
+            }
+            _ => (),
+        };
+        info!("Polled");
         return true;
     }
 }
