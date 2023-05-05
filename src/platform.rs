@@ -1,28 +1,37 @@
-use apca::api::v2::{order, position};
 use apca::{ApiInfo, Client};
+use apca::api::v2::order;
 use log::{error, info, warn};
 use std::error::Error;
 use url::Url;
 
+use num_decimal::Num;
+
 mod account;
-pub mod mktdata;
-pub mod trading;
+mod mktdata;
+mod trading;
+mod mktorder;
+mod mktposition;
+mod risk_sizing;
 
 use crate::platform::account::AccountDetails;
 use crate::platform::mktdata::MktData;
 use crate::platform::trading::Trading;
+use crate::platform::risk_sizing::MaxLeverage;
 
+#[derive(Debug)]
 struct Services {
     account: AccountDetails,
     mktdata: MktData,
     trading: Trading,
 }
 
+//#[derive(Debug)]
 //struct RiskManagement {
 //    locker: Locker,
 //    risk: RiskCalculator
 //}
 
+#[derive(Debug)]
 pub struct Platform {
     client: Client,
     services: Option<Services>,
@@ -44,16 +53,14 @@ impl Platform {
 
     pub async fn startup(&mut self) -> Result<(), Box<dyn Error + Send + Sync>> {
         let mut account = AccountDetails::new();
-        let mktdata = MktData::new();
+        let mut mktdata = MktData::new();
         let mut trading = Trading::new();
 
         account.startup(&self.client).await;
         trading.startup(&self.client).await;
-        info!("To loop Here");
         mktdata
-            .startup(&self.client, vec!["APPL".to_string()])
+            .startup(&self.client, trading.get_mktorders(), trading.get_mktpositions())
             .await;
-        info!("To loop Here");
 
         Ok(self.services = Some(Services {
             account,
@@ -68,27 +75,36 @@ impl Platform {
             return false;
         }
         info!("Sending order");
-        match self
-            .services
-            .as_mut()
-            .unwrap()
-            .trading
-            .create_position(
-                &self.client,
-                "APPL".to_string(),
-                170.00,
-                10,
-                order::Side::Buy,
-            )
-            .await
-        {
-            Err(err) => {
-                error!("Failed to place first order {}", err);
-                return false;
-            }
-            _ => (),
-        };
-        info!("Polled");
-        return true;
+        let success = true;
+//        let success = self
+//            .services
+//            .as_mut()
+//            .unwrap()
+//            .trading
+//            .create_position(
+//                &self.client,
+//                "MSFT".to_string(),
+//                Num::from(170),
+//                Num::from(10),
+//                order::Side::Buy,
+//            )
+//            .await;
+        info!("Sending order success {success:?}");
+        return success;
+    }
+
+//    pub fn create_position(&self, symbol: String, price: Num, side: order::Side) -> Result<(), Box<dyn std::error::Error>> {
+//        let account = &self.services.unwrap().account;
+//        let port_weight = MaxLeverage::get_port_weight(account.get_buying_power(), self.get_gross_position_value(), account.get_equity_with_loan());
+//        self.services.unwrap().trading.create_position(&self.client,symbol,price, size, side); 
+//        return true
+//    }
+
+    fn get_gross_position_value(&self) -> Num {
+        let mut gross_position_value = Num::from(0);
+        for order in self.services.as_ref().unwrap().trading.get_mktorders() {
+            gross_position_value += order.market_value();
+        }
+        return gross_position_value;
     }
 }
