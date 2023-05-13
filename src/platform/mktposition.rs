@@ -1,7 +1,5 @@
 use apca::api::v2::position;
 
-use num_decimal::Num;
-
 #[derive(Debug)]
 pub struct MktPosition {
     position: position::Position,
@@ -12,8 +10,7 @@ impl MktPosition {
         MktPosition { position }
     }
 
-    pub fn get_symbol(&self) -> &String {
-        &self.position.symbol
+    pub fn get_position(&self) -> &position::Position {
+        &self.position
     }
-
 }

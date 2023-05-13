@@ -109,9 +109,11 @@ async fn main() {
     info!("To loop Here");
     while !SHUTDOWN_REQUESTED.load(Ordering::Relaxed) {
         info!("in the while loop");
-        if platform.poll().await {
-            info!("Startup complete");
-            break;
+        match platform.poll().await {
+            _ => {
+                info!("Startup complete");
+                break;
+            }
         }
         sleep(Duration::from_secs(5)).await;
     }

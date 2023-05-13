@@ -1,31 +1,38 @@
-use apca::api::v2::{order, orders, position, positions, updates, asset};
+use apca::api::v2::{asset, order, orders, position, positions, updates};
 use apca::Client;
 use log::{error, info, warn};
 use num_decimal::Num;
+use std::sync::atomic;
+use std::sync::{Arc, Mutex};
 use std::{thread, time::Duration};
 
+use futures::stream::Map;
 use futures::FutureExt as _;
 use futures::StreamExt as _;
 use futures::TryStreamExt as _;
-use futures::stream::Map;
 
+use tokio::time;
 
-use crate::platform::mktorder;
-use crate::platform::mktposition;
+use super::mktorder;
+use super::mktposition;
 
 const DENOM: f32 = 100.00;
 
 #[derive(Debug)]
 pub struct Trading {
+    client: Arc<Mutex<Client>>,
     positions: Vec<mktposition::MktPosition>,
     orders: Vec<mktorder::MktOrder>,
+    is_alive: Arc<Mutex<bool>>,
 }
 
 impl Trading {
-    pub fn new() -> Self {
+    pub fn new(client: Arc<Mutex<Client>>) -> Self {
         Trading {
+            client,
             positions: Vec::default(),
             orders: Vec::default(),
+            is_alive: Arc::new(Mutex::new(false)),
         }
     }
 
@@ -37,16 +44,16 @@ impl Trading {
         return &self.positions;
     }
 
-    pub async fn startup(&mut self, client: &Client) {
-        self.orders = match Self::get_orders(client).await {
+    pub async fn startup(&mut self) {
+        self.orders = match self.get_orders().await {
             Ok(val) => val,
             Err(err) => panic!("{:?}", err),
         };
-        self.positions = match Self::get_positions(client).await {
+        self.positions = match self.get_positions().await {
             Ok(val) => val,
             Err(err) => panic!("{:?}", err),
         };
-        match self.subscribe_to_stream(client).await {
+        match self.subscribe_to_stream().await {
             Err(err) => {
                 error!("Failed to subscribe to stream, error: {err}");
                 panic!("{:?}", err);
@@ -55,44 +62,50 @@ impl Trading {
         };
     }
 
-    async fn subscribe_to_stream(&mut self, _client: &Client) -> Result<(), Box<dyn std::error::Error>> {
-//        let (mut stream, mut _subscription) = client
-//            .subscribe::<updates::OrderUpdates>().await?;
-        //
-        //        info!("Type is {:?}", Self::print_type(&stream));
-        //
-//        let () = match stream
-//            .try_for_each(|result| async {
-//                result
-//                    .map(|data| println!("{data:?}"))
-//                    .map_err(apca::Error::Json).unwrap()
-//            })
-//        .await.unwrap().unwrap() {
-//            Err(err) => panic!("Panic {:?}", err);
-//            _ => () 
-//
-//        };
+    async fn subscribe_to_stream(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        if *self.is_alive.lock().unwrap() {
+            return Ok(());
+        }
+        let (mut stream, mut _subscription) = self
+            .client
+            .lock()
+            .unwrap()
+            .subscribe::<updates::OrderUpdates>()
+            .await?;
 
+        *self.is_alive.lock().unwrap() = true;
+        info!("Before the stream is off");
 
-        //        let update = stream
-        //            .try_filter_map(|result| {
-        //                let update = result.unwrap();
-        //                Ok(Some(update))
-        //            })
-        //            .await
-        //            .unwrap()
-        //            .unwrap();
+        let is_alive = self.is_alive.clone();
+        tokio::spawn(async move {
+            while *is_alive.lock().unwrap() {
+                match stream
+                    .by_ref()
+                    .take_until(time::sleep(time::Duration::from_secs(30)))
+                    .map_err(apca::Error::WebSocket)
+                    .try_for_each(|result| async {
+                        info!("Checking map home");
+                        result
+                            .map(|data| info!("Chris {data:?}"))
+                            .map_err(apca::Error::Json)
+                    })
+                    .await
+                {
+                    Err(err) => error!("Error thrown in websocket {}", err),
+                    _ => (),
+                };
+            }
+        });
         Ok(())
     }
 
     pub async fn create_position(
         &mut self,
-        client: &Client,
         symbol: String,
         target_price: Num,
         position_size: Num,
         side: order::Side,
-    ) -> bool {
+    ) -> Result<(), ()> {
         let request = order::OrderReqInit {
             type_: order::Type::StopLimit,
             limit_price: Some(target_price.clone()),
@@ -103,44 +116,58 @@ impl Trading {
         let mut retry = 5;
         loop {
             info!("Before posting the order");
-            match client.issue::<order::Post>(&request).await {
+            match self
+                .client
+                .lock()
+                .unwrap()
+                .issue::<order::Post>(&request)
+                .await
+            {
                 Ok(val) => {
                     info!("Placed order {val:?}");
                     self.orders.push(mktorder::MktOrder::new(val));
-                    return true
-                },
+                    return Ok(());
+                }
                 Err(apca::RequestError::Endpoint(order::PostError::NotPermitted(err))) => {
                     if retry == 0 {
                         error!("Failed to post order");
-                        break;
+                        return Err(());
                     }
                     warn!("Retry order posting retries left: {retry}, err: {err:?}");
-                },
-                Err(err) => panic!("Unknown error: {err:?}")
+                }
+                Err(err) => {
+                    error!("Unknown error: {err:?}");
+                    return Err(());
+                }
             }
             retry -= 1;
             thread::sleep(Duration::from_secs(1));
         }
-        false
     }
 
-    pub async fn liquidate_position(&mut self, client: &Client, position: &position::Position) -> bool {
+    pub async fn liquidate_position(&mut self, position: &position::Position) -> bool {
         let mut retry = 5;
         loop {
             info!("Before the liquidate position");
-            match client.issue::<position::Delete>(&asset::Symbol::Sym(position.symbol.to_string())).await {
+            match self
+                .client
+                .lock()
+                .unwrap()
+                .issue::<position::Delete>(&asset::Symbol::Sym(position.symbol.to_string()))
+                .await
+            {
                 Ok(val) => {
                     info!("Placed order {:?}", val);
-                    return true
-                },
+                    return true;
+                }
                 Err(err) => {
                     if retry == 0 {
                         error!("Failed to liquidate position");
                         break;
                     }
                     warn!("Retry liquidating position retries left: {retry}, err: {err:?}");
-                },
-                Err(err) => panic!("Unknown error: {err:?}")
+                }
+                Err(err) => panic!("Unknown error: {err:?}"),
             }
             retry -= 1;
             thread::sleep(Duration::from_secs(1));
@@ -148,23 +175,29 @@ impl Trading {
         false
     }
 
-    pub async fn cancel_position(&self, client: &Client, order: &order::Order) -> bool {
+    pub async fn cancel_order(&self, order: &mktorder::MktOrder) -> bool {
         let mut retry = 5;
         loop {
             info!("Before the liquidate position");
-            match client.issue::<order::Delete>(&order.id).await {
+            match self
+                .client
+                .lock()
+                .unwrap()
+                .issue::<order::Delete>(&order.get_order().id)
+                .await
+            {
                 Ok(val) => {
                     info!("Placed order {:?}", val);
-                    return true
-                },
+                    return true;
+                }
                 Err(err) => {
                     if retry == 0 {
                         error!("Failed to post order, not permitted");
                         break;
                     }
                     warn!("Retry order cancelling retries left: {retry}, err: {err:?}");
-                },
-                Err(err) => panic!("Unknown error: {err:?}")
+                }
+                Err(err) => panic!("Unknown error: {err:?}"),
             }
             retry -= 1;
             thread::sleep(Duration::from_secs(1));
@@ -172,11 +205,19 @@ impl Trading {
         false
     }
 
-    async fn get_orders(client: &Client) -> Result<Vec<mktorder::MktOrder>, apca::RequestError<orders::GetError>> {
+    async fn get_orders(
+        &self,
+    ) -> Result<Vec<mktorder::MktOrder>, apca::RequestError<orders::GetError>> {
         let mut retry = 5;
         loop {
             let request = orders::OrdersReq::default();
-            match client.issue::<orders::Get>(&request).await {
+            match self
+                .client
+                .lock()
+                .unwrap()
+                .issue::<orders::Get>(&request)
+                .await
+            {
                 Ok(val) => {
                     info!("Downloaded orders");
                     let mut orders = Vec::default();
@@ -185,24 +226,32 @@ impl Trading {
                         orders.push(mktorder::MktOrder::new(v));
                     }
                     return Ok(orders);
-                },
+                }
                 Err(err) => {
                     retry -= 1;
                     if retry == 0 {
                         error!("Failed to retrieve orders {}", err);
                         return Err(err);
                     }
-                },
-                Err(err) => panic!("Unknown error: {err:?}")
+                }
+                Err(err) => panic!("Unknown error: {err:?}"),
             }
             thread::sleep(Duration::from_secs(1));
         }
     }
 
-    async fn get_positions(client: &Client) -> Result<Vec<mktposition::MktPosition>, apca::RequestError<positions::GetError>> {
+    async fn get_positions(
+        &self,
+    ) -> Result<Vec<mktposition::MktPosition>, apca::RequestError<positions::GetError>> {
         let mut retry = 5;
         loop {
-            match client.issue::<positions::Get>(&()).await {
+            match self
+                .client
+                .lock()
+                .unwrap()
+                .issue::<positions::Get>(&())
+                .await
+            {
                 Ok(val) => {
                     let mut positions = Vec::default();
                     for v in val {
@@ -210,15 +259,15 @@ impl Trading {
                         positions.push(mktposition::MktPosition::new(v));
                     }
                     return Ok(positions);
-                },
+                }
                 Err(err) => {
                     retry -= 1;
                     if retry == 0 {
                         error!("Failed to retrieve positions {}", err);
                         return Err(err);
                     }
-                },
-                Err(err) => panic!("Unknown error: {err:?}")
+                }
+                Err(err) => panic!("Unknown error: {err:?}"),
             }
             thread::sleep(Duration::from_secs(1));
         }
