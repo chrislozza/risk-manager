@@ -1,6 +1,5 @@
-use apca::api::v2::order;
 use apca::{ApiInfo, Client};
-use log::{error, info, warn};
+use log::info;
 use std::error::Error;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -18,25 +17,28 @@ mod risk_sizing;
 mod trading;
 
 use crate::platform::account::AccountDetails;
-use crate::platform::locker::TrailingStop;
+use crate::platform::locker::Locker;
 use crate::platform::mktdata::MktData;
 use crate::platform::risk_sizing::MaxLeverage;
 use crate::platform::trading::Trading;
 
-#[derive(Debug)]
 struct Services {
     account: AccountDetails,
-    mktdata: MktData,
+    mktdata: Arc<Mutex<MktData>>,
     trading: Trading,
 }
 
-#[derive(Debug)]
 struct RiskManagement {
-    locker: TrailingStop,
+    locker: Locker,
     risk: MaxLeverage,
 }
 
-#[derive(Debug)]
+impl RiskManagement {
+    pub fn new(locker: Locker, risk: MaxLeverage) -> Self {
+        RiskManagement { locker, risk }
+    }
+}
+
 pub struct Platform {
     client: Arc<Mutex<Client>>,
     services: Option<Services>,
@@ -58,15 +60,18 @@ impl Platform {
 
     pub async fn startup(&mut self) -> Result<(), Box<dyn Error + Send + Sync>> {
         let mut account = AccountDetails::new(Arc::clone(&self.client));
-        let mut mktdata = MktData::new(Arc::clone(&self.client));
         let mut trading = Trading::new(Arc::clone(&self.client));
+        let mktdata = Arc::new(Mutex::new(MktData::new(Arc::clone(&self.client))));
+
+        let locker = Locker::new(Arc::clone(&mktdata));
 
         account.startup().await;
         trading.startup().await;
-        mktdata
+        mktdata.lock().unwrap()
             .startup(trading.get_mktorders(), trading.get_mktpositions())
             .await;
 
+        //mktdata.register_callback(locker.);
         Ok(self.services = Some(Services {
             account,
             mktdata,

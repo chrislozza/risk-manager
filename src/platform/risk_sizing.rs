@@ -1,9 +1,7 @@
-use log::{error, info, warn};
 use std::cmp;
 
 use num_decimal::Num;
 
-#[derive(Debug)]
 pub struct MaxLeverage {}
 
 impl MaxLeverage {

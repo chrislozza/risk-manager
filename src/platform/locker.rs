@@ -1,22 +1,20 @@
 use super::mktdata::MktData;
-use super::mktorder::MktOrder;
-use super::mktposition::MktPosition;
+
 use log::info;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use apca::data::v2::stream;
 
 use num_decimal::Num;
 
-#[derive(Debug)]
-struct Locker {
+pub struct Locker {
     mktdata: Arc<Mutex<MktData>>,
     liqudate: Option<fn()>,
     cancel: Option<fn()>,
     stops: HashMap<String, TrailingStop>,
 }
 
-#[derive(Debug)]
-pub struct TrailingStop {
+struct TrailingStop {
     symbol: String,
     entry_price: f64,
     trail_pc: f64,
@@ -33,6 +31,16 @@ impl Locker {
             cancel: None,
             stops: HashMap::new(),
         }
+    }
+
+    pub async fn startup(&mut self) {
+        let locker_copy = self.clone();
+        let callback = move |trade|{ locker_copy.real_time_callback(trade) };
+        self.mktdata.lock().unwrap().register_callback(callback);
+    }
+
+    pub fn real_time_callback(&self, trade: stream::Trade) {
+        info!("In locker with trade from {}", trade.symbol);
     }
 
     pub async fn monitor_trade(&mut self, symbol: &String, entry_price: Num) {

@@ -13,7 +13,7 @@ pub struct AccountDetails {
 impl AccountDetails {
     pub fn new(client: Arc<Mutex<Client>>) -> AccountDetails {
         AccountDetails {
-            client: client,
+            client,
             account_details: None,
         }
     }

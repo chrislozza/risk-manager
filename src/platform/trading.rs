@@ -2,12 +2,9 @@ use apca::api::v2::{asset, order, orders, position, positions, updates};
 use apca::Client;
 use log::{error, info, warn};
 use num_decimal::Num;
-use std::sync::atomic;
 use std::sync::{Arc, Mutex};
 use std::{thread, time::Duration};
 
-use futures::stream::Map;
-use futures::FutureExt as _;
 use futures::StreamExt as _;
 use futures::TryStreamExt as _;
 
@@ -18,7 +15,6 @@ use super::mktposition;
 
 const DENOM: f32 = 100.00;
 
-#[derive(Debug)]
 pub struct Trading {
     client: Arc<Mutex<Client>>,
     positions: Vec<mktposition::MktPosition>,
@@ -95,6 +91,7 @@ impl Trading {
                     _ => (),
                 };
             }
+            info!("Trading updates ended");
         });
         Ok(())
     }
