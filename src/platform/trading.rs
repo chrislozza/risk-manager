@@ -1,16 +1,17 @@
-use apca::api::v2::{asset, order, orders, position, positions, updates};
+use apca::api::v2::{asset, order, orders, position, positions};
 use apca::Client;
 use log::{error, info, warn};
 use num_decimal::Num;
 use std::sync::{Arc, Mutex};
 use std::{thread, time::Duration};
+use std::collections::HashMap;
 
 use tokio::sync::broadcast;
-use tokio::time;
 
 use super::mktorder::MktOrder;
 use super::mktposition::MktPosition;
-use super::stream_handler::{Event, StreamHandler};
+use super::stream_handler::StreamHandler;
+use super::Event;
 
 const DENOM: f32 = 100.00;
 
@@ -39,7 +40,7 @@ impl Trading {
         self.sender.subscribe()
     }
 
-    pub async fn startup(&mut self) -> Result<(Vec<MktPosition>, Vec<MktOrder>), ()> {
+    pub async fn startup(&mut self) -> Result<(HashMap<String, MktPosition>, HashMap<String, MktOrder>), ()> {
         let orders = match self.get_orders().await {
             Ok(val) => val,
             Err(err) => panic!("{err:?}"),
@@ -56,6 +57,10 @@ impl Trading {
             _ => (),
         };
         Ok((positions, orders))
+    }
+
+    pub async fn shutdown(&self) {
+        info!("Shutdown initiated");
     }
 
     //    async fn subscribe_to_stream(&mut self) -> Result<(), Box<dyn std::error::Error>> {
@@ -141,7 +146,7 @@ impl Trading {
         }
     }
 
-    pub async fn liquidate_position(&mut self, position: &position::Position) -> bool {
+    pub async fn liquidate_position(&self, position: &MktPosition) -> bool {
         let mut retry = 5;
         loop {
             info!("Before the liquidate position");
@@ -149,7 +154,7 @@ impl Trading {
                 .client
                 .lock()
                 .unwrap()
-                .issue::<position::Delete>(&asset::Symbol::Sym(position.symbol.to_string()))
+                .issue::<position::Delete>(&asset::Symbol::Sym(position.get_position().symbol.to_string()))
                 .await
             {
                 Ok(val) => {
@@ -163,7 +168,6 @@ impl Trading {
                     }
                     warn!("Retry liquidating position retries left: {retry}, err: {err:?}");
                 }
-                Err(err) => panic!("Unknown error: {err:?}"),
             }
             retry -= 1;
             thread::sleep(Duration::from_secs(1));
@@ -201,7 +205,7 @@ impl Trading {
         false
     }
 
-    async fn get_orders(&self) -> Result<Vec<MktOrder>, apca::RequestError<orders::GetError>> {
+    async fn get_orders(&self) -> Result<HashMap<String, MktOrder>, apca::RequestError<orders::GetError>> {
         let mut retry = 5;
         loop {
             let request = orders::OrdersReq::default();
@@ -214,10 +218,10 @@ impl Trading {
             {
                 Ok(val) => {
                     info!("Downloaded orders");
-                    let mut orders = Vec::default();
+                    let mut orders = HashMap::default();
                     for v in val {
                         info!("Order download {v:?}");
-                        orders.push(MktOrder::new(v));
+                        orders.insert(v.symbol.to_string(), MktOrder::new(v));
                     }
                     return Ok(orders);
                 }
@@ -236,7 +240,7 @@ impl Trading {
 
     async fn get_positions(
         &self,
-    ) -> Result<Vec<MktPosition>, apca::RequestError<positions::GetError>> {
+    ) -> Result<HashMap<String, MktPosition>, apca::RequestError<positions::GetError>> {
         let mut retry = 5;
         loop {
             match self
@@ -247,10 +251,10 @@ impl Trading {
                 .await
             {
                 Ok(val) => {
-                    let mut positions = Vec::default();
+                    let mut positions = HashMap::default();
                     for v in val {
                         info!("Position download {v:?}");
-                        positions.push(MktPosition::new(v));
+                        positions.insert(v.symbol.to_string(), MktPosition::new(v));
                     }
                     return Ok(positions);
                 }

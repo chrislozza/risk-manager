@@ -29,13 +29,25 @@ impl Locker {
         }
     }
 
-    pub async fn monitor_trade(&mut self, symbol: &String, entry_price: Num) {
+    pub fn monitor_trade(&mut self, symbol: &String, entry_price: Num) {
         let stop = TrailingStop::new(symbol.clone(), entry_price.to_f64().unwrap(), 7.0);
         if self.stops.contains_key(symbol) {
             *self.stops.get_mut(symbol).unwrap() = stop;
         } else {
             self.stops.insert(symbol.clone(), stop);
         }
+    }
+
+    pub fn should_close(&mut self, trade: &stream::Trade) -> bool {
+        let symbol = trade.symbol.as_str();
+        if !self.stops.contains_key(symbol) {
+            info!("Symbol: {symbol:?} not being tracked in locker");
+            return false
+        }
+        let trade_price = trade.trade_price.to_f64().unwrap();
+        let stop = self.stops.get_mut(symbol).unwrap();
+        let stop_price = stop.price_update(trade_price);
+        return stop_price > trade_price
     }
 }
 

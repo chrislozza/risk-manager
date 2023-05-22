@@ -2,13 +2,14 @@ use apca::data::v2::stream;
 use apca::Client;
 use log::{error, info};
 use std::sync::{Arc, Mutex};
-use std::vec::Vec;
+use std::collections::HashMap;
 
 use tokio::sync::broadcast;
 
 use super::mktorder;
 use super::mktposition;
-use super::stream_handler::{Event, StreamHandler};
+use super::stream_handler::StreamHandler;
+use super::Event;
 
 pub struct MktData {
     client: Arc<Mutex<Client>>,
@@ -35,15 +36,15 @@ impl MktData {
 
     fn build_symbol_list(
         &self,
-        orders: &Vec<mktorder::MktOrder>,
-        positions: &Vec<mktposition::MktPosition>,
+        orders: &HashMap<String, mktorder::MktOrder>,
+        positions: &HashMap<String, mktposition::MktPosition>,
     ) -> Vec<String> {
         let mut symbols = Vec::<String>::default();
-        for mktorder in orders.iter() {
+        for mktorder in orders.values() {
             symbols.push(mktorder.get_order().symbol.clone());
         }
 
-        for mktposition in positions.iter() {
+        for mktposition in positions.values() {
             symbols.push(mktposition.get_position().symbol.clone());
         }
         return symbols;
@@ -55,8 +56,8 @@ impl MktData {
 
     pub async fn startup(
         &mut self,
-        orders: &Vec<mktorder::MktOrder>,
-        positions: &Vec<mktposition::MktPosition>,
+        orders: &HashMap<String, mktorder::MktOrder>,
+        positions: &HashMap<String, mktposition::MktPosition>,
     ) {
         let symbols = self.build_symbol_list(orders, positions);
         if symbols.len() == 0 {
@@ -76,6 +77,10 @@ impl MktData {
             Ok(val) => val,
         };
         self.symbols = symbols;
+    }
+
+    pub async fn shutdown(&self) {
+        info!("Shutdown initiated");
     }
 
     pub async fn subscribe(&mut self, symbol: String) {

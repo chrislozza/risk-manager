@@ -14,11 +14,7 @@ use futures::FutureExt as _;
 use futures::StreamExt as _;
 use futures::TryStreamExt as _;
 
-#[derive(Debug, Clone)]
-pub enum Event {
-    Trade(stream::Trade),
-    OrderUpdate(updates::OrderUpdate),
-}
+use super::Event;
 
 pub struct StreamHandler {
     client: Arc<Mutex<Client>>,

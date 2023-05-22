@@ -1,13 +1,14 @@
 use apca::api::v2::order;
 use apca::{ApiInfo, Client};
 use log::info;
-use std::error::Error;
 use std::sync::Arc;
 use std::sync::Mutex;
 use url::Url;
+use std::collections::HashMap;
 
 use num_decimal::Num;
-use tokio::sync::broadcast::Receiver;
+use tokio::sync::mpsc;
+use tokio::sync::broadcast;
 use tokio::time;
 
 mod account;
@@ -19,26 +20,27 @@ mod risk_sizing;
 mod stream_handler;
 mod trading;
 
-use crate::platform::account::AccountDetails;
-use crate::platform::locker::Locker;
-use crate::platform::mktdata::MktData;
-use crate::platform::mktorder::MktOrder;
-use crate::platform::mktposition::MktPosition;
-use crate::platform::risk_sizing::MaxLeverage;
-use crate::platform::stream_handler::Event;
-use crate::platform::trading::Trading;
+use account::AccountDetails;
+use locker::Locker;
+use mktdata::MktData;
+use mktorder::MktOrder;
+use mktposition::MktPosition;
+use risk_sizing::MaxLeverage;
+use trading::Trading;
+use super::events::{Event::*, Shutdown, Event};
 
 struct Engine {
     account: AccountDetails,
     mktdata: MktData,
     trading: Trading,
     locker: Locker,
-    positions: Vec<MktPosition>,
-    orders: Vec<MktOrder>,
+    positions: HashMap<String, MktPosition>,
+    orders: HashMap<String, MktOrder>,
 }
 
 pub struct Platform {
     engine: Arc<Mutex<Engine>>,
+    shutdown_signal: Option<mpsc::UnboundedSender<Event>>
 }
 
 impl Engine {
@@ -53,16 +55,21 @@ impl Engine {
             mktdata,
             trading,
             locker,
-            positions: Vec::default(),
-            orders: Vec::default(),
+            positions: HashMap::default(),
+            orders: HashMap::default(),
         }))
     }
 
-    pub fn get_mktorders(&self) -> &Vec<MktOrder> {
+    pub async fn shutdown(&self) {
+        self.trading.shutdown();
+        self.mktdata.shutdown();
+    }
+
+    pub fn get_mktorders(&self) -> &HashMap<String, MktOrder> {
         return &self.orders;
     }
 
-    pub fn get_mktpositions(&self) -> &Vec<MktPosition> {
+    pub fn get_mktpositions(&self) -> &HashMap<String, MktPosition> {
         return &self.positions;
     }
 }
@@ -84,10 +91,10 @@ impl Platform {
 
         let engine = Engine::new(account, mktdata, trading, locker);
 
-        Platform { engine }
+        Platform { engine, shutdown_signal: None }
     }
 
-    async fn startup(&self) -> Result<(Receiver<Event>, Receiver<Event>), ()> {
+    async fn startup(&self) -> Result<(broadcast::Receiver<Event>, broadcast::Receiver<Event>), ()> {
         let mut engine = self.engine.lock().unwrap();
         engine.account.startup().await;
         let (positions, orders) = engine.trading.startup().await?;
@@ -100,37 +107,65 @@ impl Platform {
         ))
     }
 
+    pub async fn shutdown(&self) {
+        self.engine.lock().unwrap().shutdown();
+        match self.shutdown_signal.as_ref() {
+            Some(val) => val.clone().send(Event::Shutdown(Shutdown::Good)).unwrap(),
+            _ => ()
+        }
+    }
+
+    async fn handle_event(event: &Event, engine_clone: Arc<Mutex<Engine>>) {
+        let mut engine = engine_clone.lock().unwrap();
+        match event {
+            Event::Trade(data) => {
+                if engine.locker.should_close(&data) {
+                    let position = engine.positions.get(&data.symbol).unwrap();
+                    engine.trading.liquidate_position(position).await;
+                }
+            },
+            Event::OrderUpdate(data) => {
+                info!("Orderupdate received {data:?}");
+            }
+            Event::Shutdown(data) => {
+                info!("Orderupdate received {data:?}");
+            }
+        }
+    }
+
     pub async fn run(&mut self) -> Result<(), ()> {
         info!("Sending order");
 
-        let _engine = Arc::clone(&self.engine);
+        let (shutdown_sender, mut shutdown_reader) = mpsc::unbounded_channel();
         let (mut trading_reader, mut mktdata_reader) = self.startup().await.unwrap();
+
+        self.shutdown_signal = Some(shutdown_sender);
+        let engine_cpy = Arc::clone(&self.engine);
         loop {
             tokio::select!(
-                val = trading_reader.recv() => {info!("Found a trade {val:?}")}
-                val = mktdata_reader.recv() => {info!("Found a mktdata {val:?}")}
+                event = trading_reader.recv() => {
+                    match event {
+                        Ok(event) => {
+                            info!("Found a trade {event:?}");
+                            Self::handle_event(&event, Arc::clone(&engine_cpy)).await;
+                        },
+                        _ => (),
+                    }
+                }
+                event = mktdata_reader.recv() => {
+                    match event {
+                        Ok(event) => {
+                            info!("Found a mktdata {event:?}");
+                            Self::handle_event(&event, Arc::clone(&engine_cpy));
+                        },
+                        _ => (),
+                    }
+                }
+                _event = shutdown_reader.recv() => {
+                        break;
+                },
             );
         }
-        //        self.services.as_mut().unwrap().mktdata.subscribe("BTCUSD".to_string());
-        //        match self
-        //            .services
-        //            .as_mut()
-        //            .unwrap()
-        //            .trading
-        //            .create_position(
-        //                "BTC/USD".to_string(),
-        //                Num::from(170),
-        //                Num::from(10),
-        //                order::Side::Buy,
-        //                )
-        //            .await {
-        //                _ => {
-        //                    let mut _mktorders = &self.services.as_ref().unwrap().trading.get_mktorders();
-        ////                    trading.cancel_position();
-        //                }
-        //            };
-
-        time::sleep(time::Duration::from(time::Duration::from_secs(45))).await;
         Ok(())
     }
 
@@ -157,7 +192,7 @@ impl Platform {
     fn get_gross_position_value(&self) -> Num {
         let mut gross_position_value = Num::from(0);
         let engine = self.engine.lock().unwrap();
-        for order in engine.get_mktorders() {
+        for order in engine.get_mktorders().values() {
             gross_position_value += order.market_value();
         }
         return gross_position_value;
