@@ -1,3 +1,4 @@
+use apca::api::v2::order;
 use apca::{ApiInfo, Client};
 use log::info;
 use std::error::Error;
@@ -6,6 +7,7 @@ use std::sync::Mutex;
 use url::Url;
 
 use num_decimal::Num;
+use tokio::sync::broadcast::Receiver;
 use tokio::time;
 
 mod account;
@@ -14,34 +16,55 @@ mod mktdata;
 mod mktorder;
 mod mktposition;
 mod risk_sizing;
+mod stream_handler;
 mod trading;
 
 use crate::platform::account::AccountDetails;
 use crate::platform::locker::Locker;
 use crate::platform::mktdata::MktData;
+use crate::platform::mktorder::MktOrder;
+use crate::platform::mktposition::MktPosition;
 use crate::platform::risk_sizing::MaxLeverage;
+use crate::platform::stream_handler::Event;
 use crate::platform::trading::Trading;
 
-struct Services {
+struct Engine {
     account: AccountDetails,
-    mktdata: Arc<Mutex<MktData>>,
+    mktdata: MktData,
     trading: Trading,
-}
-
-struct RiskManagement {
     locker: Locker,
-    risk: MaxLeverage,
-}
-
-impl RiskManagement {
-    pub fn new(locker: Locker, risk: MaxLeverage) -> Self {
-        RiskManagement { locker, risk }
-    }
+    positions: Vec<MktPosition>,
+    orders: Vec<MktOrder>,
 }
 
 pub struct Platform {
-    client: Arc<Mutex<Client>>,
-    services: Option<Services>,
+    engine: Arc<Mutex<Engine>>,
+}
+
+impl Engine {
+    pub fn new(
+        account: AccountDetails,
+        mktdata: MktData,
+        trading: Trading,
+        locker: Locker,
+    ) -> Arc<Mutex<Self>> {
+        Arc::new(Mutex::new(Engine {
+            account,
+            mktdata,
+            trading,
+            locker,
+            positions: Vec::default(),
+            orders: Vec::default(),
+        }))
+    }
+
+    pub fn get_mktorders(&self) -> &Vec<MktOrder> {
+        return &self.orders;
+    }
+
+    pub fn get_mktpositions(&self) -> &Vec<MktPosition> {
+        return &self.positions;
+    }
 }
 
 impl Platform {
@@ -52,39 +75,42 @@ impl Platform {
         };
         info!("Using url {api_base_url}");
         let api_info = ApiInfo::from_parts(api_base_url, key, secret).unwrap();
-        Platform {
-            client: Arc::new(Mutex::new(Client::new(api_info))),
-            services: None,
-        }
+
+        let client = Arc::new(Mutex::new(Client::new(api_info)));
+        let account = AccountDetails::new(Arc::clone(&client));
+        let trading = Trading::new(Arc::clone(&client));
+        let mktdata = MktData::new(Arc::clone(&client));
+        let locker = Locker::new();
+
+        let engine = Engine::new(account, mktdata, trading, locker);
+
+        Platform { engine }
     }
 
-    pub async fn startup(&mut self) -> Result<(), Box<dyn Error + Send + Sync>> {
-        let mut account = AccountDetails::new(Arc::clone(&self.client));
-        let mut trading = Trading::new(Arc::clone(&self.client));
-        let mktdata = Arc::new(Mutex::new(MktData::new(Arc::clone(&self.client))));
-
-        let locker = Locker::new(Arc::clone(&mktdata));
-
-        account.startup().await;
-        trading.startup().await;
-        mktdata.lock().unwrap()
-            .startup(trading.get_mktorders(), trading.get_mktpositions())
-            .await;
-
-        //mktdata.register_callback(locker.);
-        Ok(self.services = Some(Services {
-            account,
-            mktdata,
-            trading,
-        }))
+    async fn startup(&self) -> Result<(Receiver<Event>, Receiver<Event>), ()> {
+        let mut engine = self.engine.lock().unwrap();
+        engine.account.startup().await;
+        let (positions, orders) = engine.trading.startup().await?;
+        engine.mktdata.startup(&orders, &positions).await;
+        engine.orders = orders;
+        engine.positions = positions;
+        Ok((
+            engine.trading.stream_reader(),
+            engine.mktdata.stream_reader(),
+        ))
     }
 
-    pub async fn poll(&mut self) -> Result<(), ()> {
-        if self.services.is_none() {
-            info!("Startup not complete");
-            return Ok(());
-        }
+    pub async fn run(&mut self) -> Result<(), ()> {
         info!("Sending order");
+
+        let _engine = Arc::clone(&self.engine);
+        let (mut trading_reader, mut mktdata_reader) = self.startup().await.unwrap();
+        loop {
+            tokio::select!(
+                val = trading_reader.recv() => {info!("Found a trade {val:?}")}
+                val = mktdata_reader.recv() => {info!("Found a mktdata {val:?}")}
+            );
+        }
         //        self.services.as_mut().unwrap().mktdata.subscribe("BTCUSD".to_string());
         //        match self
         //            .services
@@ -119,9 +145,19 @@ impl Platform {
     //        Ok(())
     //    }
 
+    pub async fn create_position(&mut self) {
+        self.engine.lock().unwrap().trading.create_position(
+            "MSFT".to_string(),
+            Num::from(120 as i8),
+            Num::from(10 as i8),
+            order::Side::Buy,
+        );
+    }
+
     fn get_gross_position_value(&self) -> Num {
         let mut gross_position_value = Num::from(0);
-        for order in self.services.as_ref().unwrap().trading.get_mktorders() {
+        let engine = self.engine.lock().unwrap();
+        for order in engine.get_mktorders() {
             gross_position_value += order.market_value();
         }
         return gross_position_value;

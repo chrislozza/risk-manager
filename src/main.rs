@@ -12,6 +12,8 @@ use crate::logging::SimpleLogger;
 use crate::platform::Platform;
 use crate::settings::Settings;
 
+use tokio::signal;
+
 use log::{LevelFilter, SetLoggerError};
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -91,7 +93,10 @@ async fn main() {
     let is_live = match cmdline_args.value_of("TYPE").unwrap() {
         "live" => true,
         "paper" => false,
-        _ => panic!("Couldn't determine cmdline type"),
+        _ => {
+            error!("Couldn't determine cmdline type");
+            std::process::exit(1);
+        }
     };
 
     register_signal_handler(libc::SIGINT);
@@ -99,18 +104,20 @@ async fn main() {
 
     let _settings = Settings::read_config_file(config);
     let mut platform = Platform::new(key, secret, is_live);
-    match platform.startup().await {
-        Ok(_) => info!("Startup complete"),
-        Err(err) => {
-            error!("Failed to startup, error: {err}");
-            std::process::exit(1);
-        }
-    };
-    info!("To loop Here");
+
+//    loop {
+//        tokio::select! {
+//            _ = signal::ctrl_c() => {
+//                std::process::exit(1)
+//            },
+//        }
+//    }
+    
     while !SHUTDOWN_REQUESTED.load(Ordering::Relaxed) {
         info!("in the while loop");
-        match platform.poll().await {
-            _ => {
+        match platform.run().await {
+            Err(_val) => (),
+            Ok(_) => {
                 info!("Startup complete");
                 break;
             }

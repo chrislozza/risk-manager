@@ -5,96 +5,96 @@ use num_decimal::Num;
 use std::sync::{Arc, Mutex};
 use std::{thread, time::Duration};
 
-use futures::StreamExt as _;
-use futures::TryStreamExt as _;
-
+use tokio::sync::broadcast;
 use tokio::time;
 
-use super::mktorder;
-use super::mktposition;
+use super::mktorder::MktOrder;
+use super::mktposition::MktPosition;
+use super::stream_handler::{Event, StreamHandler};
 
 const DENOM: f32 = 100.00;
 
 pub struct Trading {
     client: Arc<Mutex<Client>>,
-    positions: Vec<mktposition::MktPosition>,
-    orders: Vec<mktorder::MktOrder>,
     is_alive: Arc<Mutex<bool>>,
+    stream_handler: StreamHandler,
+    receiver: broadcast::Receiver<Event>,
+    sender: broadcast::Sender<Event>,
 }
 
 impl Trading {
     pub fn new(client: Arc<Mutex<Client>>) -> Self {
+        let (sender, receiver) = broadcast::channel(2);
+        let stream_handler = StreamHandler::new(Arc::clone(&client), sender.clone());
         Trading {
             client,
-            positions: Vec::default(),
-            orders: Vec::default(),
             is_alive: Arc::new(Mutex::new(false)),
+            stream_handler,
+            sender,
+            receiver,
         }
     }
 
-    pub fn get_mktorders(&self) -> &Vec<mktorder::MktOrder> {
-        return &self.orders;
+    pub fn stream_reader(&self) -> broadcast::Receiver<Event> {
+        self.sender.subscribe()
     }
 
-    pub fn get_mktpositions(&self) -> &Vec<mktposition::MktPosition> {
-        return &self.positions;
-    }
-
-    pub async fn startup(&mut self) {
-        self.orders = match self.get_orders().await {
+    pub async fn startup(&mut self) -> Result<(Vec<MktPosition>, Vec<MktOrder>), ()> {
+        let orders = match self.get_orders().await {
             Ok(val) => val,
-            Err(err) => panic!("{:?}", err),
+            Err(err) => panic!("{err:?}"),
         };
-        self.positions = match self.get_positions().await {
+        let positions = match self.get_positions().await {
             Ok(val) => val,
-            Err(err) => panic!("{:?}", err),
+            Err(err) => panic!("{err:?}"),
         };
-        match self.subscribe_to_stream().await {
+        match self.stream_handler.subscribe_to_order_updates().await {
             Err(err) => {
-                error!("Failed to subscribe to stream, error: {err}");
+                error!("Failed to subscribe to stream, error: {err:?}");
                 panic!("{:?}", err);
             }
             _ => (),
         };
+        Ok((positions, orders))
     }
 
-    async fn subscribe_to_stream(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        if *self.is_alive.lock().unwrap() {
-            return Ok(());
-        }
-        let (mut stream, mut _subscription) = self
-            .client
-            .lock()
-            .unwrap()
-            .subscribe::<updates::OrderUpdates>()
-            .await?;
-
-        *self.is_alive.lock().unwrap() = true;
-        info!("Before the stream is off");
-
-        let is_alive = self.is_alive.clone();
-        tokio::spawn(async move {
-            while *is_alive.lock().unwrap() {
-                match stream
-                    .by_ref()
-                    .take_until(time::sleep(time::Duration::from_secs(30)))
-                    .map_err(apca::Error::WebSocket)
-                    .try_for_each(|result| async {
-                        info!("Checking map home");
-                        result
-                            .map(|data| info!("Chris {data:?}"))
-                            .map_err(apca::Error::Json)
-                    })
-                    .await
-                {
-                    Err(err) => error!("Error thrown in websocket {}", err),
-                    _ => (),
-                };
-            }
-            info!("Trading updates ended");
-        });
-        Ok(())
-    }
+    //    async fn subscribe_to_stream(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    //        if *self.is_alive.lock().unwrap() {
+    //            return Ok(());
+    //        }
+    //        let (mut stream, mut _subscription) = self
+    //            .client
+    //            .lock()
+    //            .unwrap()
+    //            .subscribe::<updates::OrderUpdates>()
+    //            .await?;
+    //
+    //        *self.is_alive.lock().unwrap() = true;
+    //        info!("Before the stream is off");
+    //
+    //        let is_alive = self.is_alive.clone();
+    //        tokio::spawn(async move {
+    //            while *is_alive.lock().unwrap() {
+    //                match stream
+    //                    .by_ref()
+    //                    .take_until(time::sleep(time::Duration::from_secs(30)))
+    //                    .map_err(apca::Error::WebSocket)
+    //                    .try_for_each(|result| async {
+    //                        info!("Checking map home");
+    //                        result
+    //                            .map(|data| info!("Chris {data:?}"))
+    //                            .map_err(apca::Error::Json)
+    //                    })
+    //                    .await
+    //                {
+    //                    Err(err) => error!("Error thrown in websocket {}", err),
+    //                    _ => (),
+    //                };
+    //            }
+    //            info!("Trading updates ended");
+    //        });
+    //        Ok(())
+    //    }
 
     pub async fn create_position(
         &mut self,
@@ -102,11 +102,11 @@ impl Trading {
         target_price: Num,
         position_size: Num,
         side: order::Side,
-    ) -> Result<(), ()> {
+    ) -> Result<MktOrder, ()> {
         let request = order::OrderReqInit {
             type_: order::Type::StopLimit,
-            limit_price: Some(target_price.clone()),
-            stop_price: Some(target_price * Num::new((1.12 * DENOM) as i32, DENOM as i32)),
+            limit_price: Some(target_price.clone() * Num::new((1.07 * DENOM) as i32, DENOM as i32)),
+            stop_price: Some(target_price * Num::new((1.01 * DENOM) as i32, DENOM as i32)),
             ..Default::default()
         }
         .init(symbol, side, order::Amount::quantity(position_size));
@@ -122,8 +122,7 @@ impl Trading {
             {
                 Ok(val) => {
                     info!("Placed order {val:?}");
-                    self.orders.push(mktorder::MktOrder::new(val));
-                    return Ok(());
+                    return Ok(MktOrder::new(val));
                 }
                 Err(apca::RequestError::Endpoint(order::PostError::NotPermitted(err))) => {
                     if retry == 0 {
@@ -172,7 +171,7 @@ impl Trading {
         false
     }
 
-    pub async fn cancel_order(&self, order: &mktorder::MktOrder) -> bool {
+    pub async fn cancel_order(&self, order: &MktOrder) -> bool {
         let mut retry = 5;
         loop {
             info!("Before the liquidate position");
@@ -202,9 +201,7 @@ impl Trading {
         false
     }
 
-    async fn get_orders(
-        &self,
-    ) -> Result<Vec<mktorder::MktOrder>, apca::RequestError<orders::GetError>> {
+    async fn get_orders(&self) -> Result<Vec<MktOrder>, apca::RequestError<orders::GetError>> {
         let mut retry = 5;
         loop {
             let request = orders::OrdersReq::default();
@@ -220,7 +217,7 @@ impl Trading {
                     let mut orders = Vec::default();
                     for v in val {
                         info!("Order download {v:?}");
-                        orders.push(mktorder::MktOrder::new(v));
+                        orders.push(MktOrder::new(v));
                     }
                     return Ok(orders);
                 }
@@ -239,7 +236,7 @@ impl Trading {
 
     async fn get_positions(
         &self,
-    ) -> Result<Vec<mktposition::MktPosition>, apca::RequestError<positions::GetError>> {
+    ) -> Result<Vec<MktPosition>, apca::RequestError<positions::GetError>> {
         let mut retry = 5;
         loop {
             match self
@@ -253,7 +250,7 @@ impl Trading {
                     let mut positions = Vec::default();
                     for v in val {
                         info!("Position download {v:?}");
-                        positions.push(mktposition::MktPosition::new(v));
+                        positions.push(MktPosition::new(v));
                     }
                     return Ok(positions);
                 }
@@ -264,7 +261,6 @@ impl Trading {
                         return Err(err);
                     }
                 }
-                Err(err) => panic!("Unknown error: {err:?}"),
             }
             thread::sleep(Duration::from_secs(1));
         }

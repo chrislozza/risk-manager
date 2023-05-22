@@ -10,7 +10,7 @@ apca = "0.26.2"
 log = "0.4.17"
 url = "2.3.1"
 clap = { version = "3.0", features = ["derive"] }
-tokio = { version = "1.21.2", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1.21.2", features = ["macros", "rt-multi-thread", "signal"] }
 exitcode = "1.1.2"
 serde = { version = "1.0", features = ["derive"] }
 libc = "0.2.142"

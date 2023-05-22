@@ -2,7 +2,7 @@ use apca::api::v2::order;
 
 use num_decimal::Num;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MktOrder {
     order: order::Order,
 }

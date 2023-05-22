@@ -1,16 +1,15 @@
 use super::mktdata::MktData;
+use super::mktorder::MktOrder;
+use super::trading::Trading;
 
+use apca::data::v2::stream;
 use log::info;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
-use apca::data::v2::stream;
 
 use num_decimal::Num;
 
 pub struct Locker {
-    mktdata: Arc<Mutex<MktData>>,
-    liqudate: Option<fn()>,
-    cancel: Option<fn()>,
     stops: HashMap<String, TrailingStop>,
 }
 
@@ -24,23 +23,10 @@ struct TrailingStop {
 }
 
 impl Locker {
-    pub fn new(mktdata: Arc<Mutex<MktData>>) -> Self {
+    pub fn new() -> Self {
         Locker {
-            mktdata,
-            liqudate: None,
-            cancel: None,
             stops: HashMap::new(),
         }
-    }
-
-    pub async fn startup(&mut self) {
-        let locker_copy = self.clone();
-        let callback = move |trade|{ locker_copy.real_time_callback(trade) };
-        self.mktdata.lock().unwrap().register_callback(callback);
-    }
-
-    pub fn real_time_callback(&self, trade: stream::Trade) {
-        info!("In locker with trade from {}", trade.symbol);
     }
 
     pub async fn monitor_trade(&mut self, symbol: &String, entry_price: Num) {
@@ -49,16 +35,7 @@ impl Locker {
             *self.stops.get_mut(symbol).unwrap() = stop;
         } else {
             self.stops.insert(symbol.clone(), stop);
-            self.mktdata.lock().unwrap().subscribe(symbol.clone()).await;
         }
-    }
-
-    pub fn register_cancel_order(&mut self, cancel_order: fn()) {
-        self.cancel = Some(cancel_order)
-    }
-
-    pub fn register_liquidate_position(&mut self, liquidate_position: fn()) {
-        self.liqudate = Some(liquidate_position)
     }
 }
 
