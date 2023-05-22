@@ -1,6 +1,6 @@
 use apca::api::v2::order;
 use apca::{ApiInfo, Client};
-use log::info;
+use log::{info, error};
 use std::sync::Arc;
 use std::sync::Mutex;
 use url::Url;
@@ -121,7 +121,9 @@ impl Platform {
             Event::Trade(data) => {
                 if engine.locker.should_close(&data) {
                     let position = engine.positions.get(&data.symbol).unwrap();
-                    engine.trading.liquidate_position(position).await;
+                    if !engine.trading.liquidate_position(position).await {
+                        error!("Dropping liquidate, failed to send to server");
+                    }
                 }
             },
             Event::OrderUpdate(data) => {

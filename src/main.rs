@@ -9,6 +9,7 @@ mod settings;
 mod events;
 
 use crate::logging::SimpleLogger;
+use crate::events::EventPublisher;
 use crate::platform::Platform;
 use crate::settings::Settings;
 
@@ -80,10 +81,12 @@ async fn main() {
 
     let _settings = Settings::read_config_file(config);
     let platform = Platform::new(key, secret, is_live);
+    let publisher = EventPublisher::new();
 
     loop {
         tokio::select! {
             _ = signal::ctrl_c() => {
+                publisher.shutdown();
                 platform.shutdown().await;
                 std::process::exit(0)
             },
