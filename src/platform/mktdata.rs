@@ -22,7 +22,7 @@ pub struct MktData {
 
 impl MktData {
     pub fn new(client: Arc<Mutex<Client>>) -> Self {
-        let (sender, receiver) = broadcast::channel(2);
+        let (sender, receiver) = broadcast::channel(100);
         let stream_handler = StreamHandler::new(Arc::clone(&client), sender.clone());
         MktData {
             client,

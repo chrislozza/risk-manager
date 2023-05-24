@@ -1,6 +1,6 @@
 use apca::api::v2::position;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MktPosition {
     position: position::Position,
 }

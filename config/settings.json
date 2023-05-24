@@ -1,0 +1,21 @@
+{
+  "gcp_sub": "gcp-pubsub",
+  "service_client": "gcp-service-client",
+  "databases": [
+    {
+      "name": "gcp-sql-host",
+      "port": 5433
+    }
+  ],
+  "strategies": {
+    "auto01": {
+      "name": "auto01",
+      "max_positions": 10
+    },
+    "manual01": {
+      "name": "manual01",
+      "max_positions": 10
+    }
+  }
+}
+

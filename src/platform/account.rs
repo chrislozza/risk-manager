@@ -3,6 +3,7 @@ use apca::Client;
 use log::{error, info};
 use std::sync::{Arc, Mutex};
 use std::{thread, time::Duration};
+use num_decimal::Num;
 
 #[derive(Debug)]
 pub struct AccountDetails {
@@ -25,7 +26,12 @@ impl AccountDetails {
                 panic!("{:?}", err)
             }
         };
+        info!("Pulled account details {account_details:?}");
         self.account_details = Some(account_details);
+    }
+
+    pub fn buying_power(&self) -> Num {
+        return self.account_details.clone().unwrap().buying_power
     }
 
     pub async fn request_account_details(

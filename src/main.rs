@@ -8,12 +8,14 @@ mod platform;
 mod settings;
 mod events;
 
-use crate::logging::SimpleLogger;
-use crate::events::EventPublisher;
-use crate::platform::Platform;
-use crate::settings::Settings;
+use logging::SimpleLogger;
+use events::EventPublisher;
+use platform::Platform;
+use settings::{Settings, Config};
+use events::Event;
 
 use tokio::signal;
+use tokio::sync::{broadcast, mpsc};
 
 use log::{LevelFilter, SetLoggerError};
 
@@ -79,17 +81,34 @@ async fn main() {
         }
     };
 
-    let _settings = Settings::read_config_file(config);
-    let platform = Platform::new(key, secret, is_live);
-    let publisher = EventPublisher::new();
+    let (send_mkt_signals, mut receive_mkt_signals) = mpsc::unbounded_channel();
 
+    let settings = Config::read_config_file(config).unwrap();
+    let mut platform = Platform::new(settings.clone(), key, secret, is_live);
+    let mut publisher = EventPublisher::new(settings).await;
+    info!("Initialised components");
+
+    platform.run().await;
+    publisher.run(&send_mkt_signals).await;
     loop {
+        info!("Taking a loop in the app");
         tokio::select! {
+            event = receive_mkt_signals.recv() => {
+                match event.unwrap() {
+                    Event::MktSignal(event) => {
+                        info!("Recieved an event {event:?}, creating new position");
+                        platform.create_position(&event).await;
+                    },
+                    _ => (),
+                }
+            }
             _ = signal::ctrl_c() => {
-                publisher.shutdown();
+                info!("Keyboard shutdown detected");
+                publisher.shutdown().await;
                 platform.shutdown().await;
-                std::process::exit(0)
+                break
             },
         }
     }
+    std::process::exit(0);
 }

@@ -73,13 +73,13 @@ impl StreamHandler {
                                     }
                                     _ => {
                                         error!("Unknown error");
-                                        return ();
+                                        return;
                                     }
                                 };
                                 match subscriber.send(event) {
                                     Err(val) => {
                                         error!("Sending error {val:?}");
-                                        return ();
+                                        return;
                                     }
                                     Err(broadcast::error::SendError(data)) => error!("{data:?}"),
                                     Ok(_) => (),
@@ -142,13 +142,13 @@ impl StreamHandler {
                                     stream::Data::Trade(data) => Event::Trade(data),
                                     _ => {
                                         error!("Unknown error");
-                                        return ();
+                                        return;
                                     }
                                 };
                                 match subscriber.send(event) {
                                     Err(val) => {
                                         error!("Sending error {val:?}");
-                                        return ();
+                                        return;
                                     }
                                     Err(broadcast::error::SendError(data)) => error!("{data:?}"),
                                     Ok(_) => (),
@@ -160,7 +160,7 @@ impl StreamHandler {
                 {
                     Err(err) => {
                         error!("Error thrown in websocket {err:?}");
-                        return ();
+                        return;
                     }
                     _ => (),
                 };
@@ -206,13 +206,13 @@ impl StreamHandler {
                                 stream::Data::Trade(data) => Event::Trade(data),
                                 data => {
                                     error!("Got data type {data:?}");
-                                    return ();
+                                    return;
                                 }
                             };
                             match subscriber.send(event) {
                                 Err(broadcast::error::SendError(val)) => {
                                     error!("Sending error {val:?}");
-                                    return ();
+                                    return;
                                 }
                                 Ok(_) => (),
                             };

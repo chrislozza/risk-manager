@@ -1,16 +1,19 @@
 use google_cloud_default::WithAuthExt;
 use google_cloud_gax::grpc::Status;
-use google_cloud_pubsub::subscription::ReceiveConfig;
-use google_cloud_pubsub::subscription::SubscriptionConfig;
+use google_cloud_pubsub::subscription::{ReceiveConfig, SubscriptionConfig};
 use google_cloud_googleapis::pubsub::v1::PubsubMessage;
 use google_cloud_pubsub::client::{Client, ClientConfig};
 
 use log::info;
 
 use std::time::Duration;
+use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use futures_util::StreamExt as _;
 
+use crate::Settings;
+use super::{Event, Event::*};
+use super::MktSignal;
 
 pub struct GcpPubSub {
     client: Client,
@@ -18,7 +21,7 @@ pub struct GcpPubSub {
 }
 
 impl GcpPubSub { 
-    pub async fn new() -> Self {
+    pub async fn new(settings: Settings) -> Self {
         let config = ClientConfig::default().with_auth().await.unwrap();
         GcpPubSub {
             client: Client::new(config).await.unwrap(),
@@ -30,20 +33,23 @@ impl GcpPubSub {
         self.cancel_token.cancel()
     }
 
-    pub async fn run(&self, subscription: &str) -> Result<(), ()> {
+    pub async fn run(&self, subscription: &str, send_mkt_signals: mpsc::UnboundedSender<Event>) -> Result<(), ()> {
         let subscriber = self.client.subscription(subscription);
         //subscribe
         let cancel_receiver = self.cancel_token.clone();
-        let (sender, mut reader) = tokio::sync::mpsc::channel(100);
+        info!("Taking a loop in the run");
         let handle = tokio::spawn(async move {
             let _ = subscriber 
                 .receive(
                     move |message, _ctx| {
-                        let s2 = sender.clone();
+                        info!("Reieved a message pubsub");
+                        let s2 = send_mkt_signals.clone();
                         async move {
                             let _ = message.ack().await;
                             let data = std::str::from_utf8(&message.message.data).unwrap().to_string();
-                            let _ = s2.send(data).await;
+                            let package: MktSignal = serde_json::from_str(&data).unwrap();
+                            info!("Data pulled from pubsub {package:?}");
+                            let _ = s2.send(Event::MktSignal(package));
                         }
                     },
                     cancel_receiver,
@@ -51,6 +57,7 @@ impl GcpPubSub {
                 )
                 .await.unwrap();
         }).await;
+        info!("After task spawned pubsub");
         Ok(())
     }
 }

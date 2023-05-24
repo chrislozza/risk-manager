@@ -1,0 +1,97 @@
+use log::{info, error};
+use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
+use std::cmp;
+use apca::api::v2::updates;
+use apca::data::v2::stream;
+
+use super::AccountDetails;
+use super::Locker;
+use super::MktData;
+use super::MktOrder;
+use super::Trading;
+use super::Event;
+use super::MktPosition;
+
+use crate::Settings;
+use crate::events::MktSignal;
+
+use num_decimal::Num;
+use tokio::sync::mpsc;
+use tokio::sync::broadcast;
+
+pub struct Engine {
+    pub account: AccountDetails,
+    pub mktdata: MktData,
+    pub trading: Trading,
+    pub locker: Locker,
+    pub positions: HashMap<String, MktPosition>,
+    pub orders: HashMap<String, MktOrder>,
+    settings: Settings,
+}
+
+impl Engine {
+    pub fn new(
+        settings: Settings,
+        account: AccountDetails,
+        mktdata: MktData,
+        trading: Trading,
+        locker: Locker,
+    ) -> Arc<Mutex<Self>> {
+        Arc::new(Mutex::new(Engine {
+            settings,
+            account,
+            mktdata,
+            trading,
+            locker,
+            positions: HashMap::default(),
+            orders: HashMap::default(),
+        }))
+    }
+
+    pub async fn shutdown(&self) {
+        self.trading.shutdown();
+        self.mktdata.shutdown();
+    }
+
+    pub fn get_mktorders(&self) -> &HashMap<String, MktOrder> {
+        return &self.orders;
+    }
+
+    pub fn get_mktpositions(&self) -> &HashMap<String, MktPosition> {
+        return &self.positions;
+    }
+    
+    pub async fn order_update(&mut self, order_update: &updates::OrderUpdate) {
+        match order_update.event {
+            updates::OrderStatus::Filled => self.locker.monitor_trade(&order_update.order.symbol, &order_update.order.average_fill_price.clone().unwrap()),
+            _ => info!("Not listening to event {0:?}", order_update.event)
+        }
+    }
+
+    pub async fn mktdata_update(&mut self, mktdata_update: &stream::Trade) {
+        if self.locker.should_close(&mktdata_update) {
+            let position = &self.positions[&mktdata_update.symbol];
+            if self.trading.liquidate_position(&position).await == false {
+                error!("Dropping liquidate, failed to send to server");
+            }
+        }
+    }
+
+    pub async fn cancel_order(&mut self) {
+        self.cancel_order();
+    }
+
+    pub async fn create_position(&mut self, mkt_signal: &MktSignal) {
+        let price = Num::new((mkt_signal.price * 100.0) as i32, 100);
+        let buying_power = self.account.buying_power();
+        let capacity = self.settings.strategies.get(&mkt_signal.strategy).unwrap();
+        let size = buying_power / Num::from(capacity.max_positions);
+        self.trading.create_position(&mkt_signal.symbol, price, size, mkt_signal.side).await;
+    }
+
+    pub async fn liquidate_position(&mut self) {
+        self.liquidate_position();
+    }
+}
+

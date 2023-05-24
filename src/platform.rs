@@ -1,8 +1,7 @@
 use apca::api::v2::order;
 use apca::{ApiInfo, Client};
 use log::{info, error};
-use std::sync::Arc;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use url::Url;
 use std::collections::HashMap;
 
@@ -12,6 +11,7 @@ use tokio::sync::broadcast;
 use tokio::time;
 
 mod account;
+mod engine;
 mod locker;
 mod mktdata;
 mod mktorder;
@@ -22,60 +22,23 @@ mod trading;
 
 use account::AccountDetails;
 use locker::Locker;
+use engine::Engine;
 use mktdata::MktData;
 use mktorder::MktOrder;
 use mktposition::MktPosition;
 use risk_sizing::MaxLeverage;
 use trading::Trading;
 use super::events::{Event::*, Shutdown, Event};
-
-struct Engine {
-    account: AccountDetails,
-    mktdata: MktData,
-    trading: Trading,
-    locker: Locker,
-    positions: HashMap<String, MktPosition>,
-    orders: HashMap<String, MktOrder>,
-}
+use crate::Settings;
+use crate::events::MktSignal;
 
 pub struct Platform {
     engine: Arc<Mutex<Engine>>,
     shutdown_signal: Option<mpsc::UnboundedSender<Event>>
 }
 
-impl Engine {
-    pub fn new(
-        account: AccountDetails,
-        mktdata: MktData,
-        trading: Trading,
-        locker: Locker,
-    ) -> Arc<Mutex<Self>> {
-        Arc::new(Mutex::new(Engine {
-            account,
-            mktdata,
-            trading,
-            locker,
-            positions: HashMap::default(),
-            orders: HashMap::default(),
-        }))
-    }
-
-    pub async fn shutdown(&self) {
-        self.trading.shutdown();
-        self.mktdata.shutdown();
-    }
-
-    pub fn get_mktorders(&self) -> &HashMap<String, MktOrder> {
-        return &self.orders;
-    }
-
-    pub fn get_mktpositions(&self) -> &HashMap<String, MktPosition> {
-        return &self.positions;
-    }
-}
-
 impl Platform {
-    pub fn new(key: &str, secret: &str, is_live: bool) -> Self {
+    pub fn new(settings: Settings, key: &str, secret: &str, is_live: bool) -> Self {
         let api_base_url = match is_live {
             true => Url::parse("https://api.alpaca.markets").unwrap(),
             false => Url::parse("https://paper-api.alpaca.markets").unwrap(),
@@ -89,8 +52,9 @@ impl Platform {
         let mktdata = MktData::new(Arc::clone(&client));
         let locker = Locker::new();
 
-        let engine = Engine::new(account, mktdata, trading, locker);
+        let engine = Engine::new(settings, account, mktdata, trading, locker);
 
+        info!("Initialised platform components");
         Platform { engine, shutdown_signal: None }
     }
 
@@ -115,23 +79,24 @@ impl Platform {
         }
     }
 
-    async fn handle_event(event: &Event, engine_clone: Arc<Mutex<Engine>>) {
-        let mut engine = engine_clone.lock().unwrap();
+    async fn handle_event(event: &Event, engine: &Arc<Mutex<Engine>>) {
         match event {
             Event::Trade(data) => {
-                if engine.locker.should_close(&data) {
-                    let position = engine.positions.get(&data.symbol).unwrap();
-                    if !engine.trading.liquidate_position(position).await {
-                        error!("Dropping liquidate, failed to send to server");
-                    }
-                }
+                info!("Trade received {data:?}");
+                engine.lock().unwrap().mktdata_update(&data);
             },
             Event::OrderUpdate(data) => {
+                engine.lock().unwrap().order_update(&data);
                 info!("Orderupdate received {data:?}");
-            }
+            },
+            Event::MktSignal(data) => {
+                info!("MarketSignal received {data:?}");
+                engine.lock().unwrap().create_position(&data);
+            },
             Event::Shutdown(data) => {
-                info!("Orderupdate received {data:?}");
-            }
+                info!("Shutdown received {data:?}");
+                engine.lock().unwrap().shutdown();
+            },
         }
     }
 
@@ -140,55 +105,43 @@ impl Platform {
 
         let (shutdown_sender, mut shutdown_reader) = mpsc::unbounded_channel();
         let (mut trading_reader, mut mktdata_reader) = self.startup().await.unwrap();
-
+        info!("Startup completed in the platform");
         self.shutdown_signal = Some(shutdown_sender);
-        let engine_cpy = Arc::clone(&self.engine);
-        loop {
-            tokio::select!(
-                event = trading_reader.recv() => {
-                    match event {
-                        Ok(event) => {
-                            info!("Found a trade {event:?}");
-                            Self::handle_event(&event, Arc::clone(&engine_cpy)).await;
-                        },
-                        _ => (),
+        let engine_clone = Arc::clone(&self.engine);
+        tokio::spawn(async move {
+            loop {
+                info!("Taking a loop in the platform");
+                tokio::select!(
+                    event = trading_reader.recv() => {
+                        match event {
+                            Ok(event) => {
+                                info!("Found a trade {event:?}");
+                                Self::handle_event(&event, &engine_clone).await;
+                            },
+                            _ => (),
+                        }
                     }
-                }
-                event = mktdata_reader.recv() => {
-                    match event {
-                        Ok(event) => {
-                            info!("Found a mktdata {event:?}");
-                            Self::handle_event(&event, Arc::clone(&engine_cpy));
-                        },
-                        _ => (),
+                    event = mktdata_reader.recv() => {
+                        match event {
+                            Ok(event) => {
+                                info!("Found a mktdata {event:?}");
+                                Self::handle_event(&event, &engine_clone).await;
+                            },
+                            _ => (),
+                        }
                     }
-                }
-                _event = shutdown_reader.recv() => {
+                    _event = shutdown_reader.recv() => {
                         break;
-                },
-            );
-        }
+                    },
+                    );
+            }
+        }).await;
+        info!("Returning from the loop in the platform");
         Ok(())
     }
 
-    //    pub fn create_position(&self, symbol: String, price: Num, side: order::Side) {
-    //        let account = &self.services.unwrap().account;
-    //        let port_weight = MaxLeverage::get_port_weight(account.get_buying_power(), self.get_gross_position_value(), account.get_equity_with_loan());
-    //        self.services.unwrap().trading.create_position(symbol,price, Num::from(10), side);
-    //    }
-    //
-    //    pub fn cancel_position(&self, symbol: String) -> Result<(), ()> {
-    //        self.services.unwrap().trading.cancel_position();
-    //        Ok(())
-    //    }
-
-    pub async fn create_position(&mut self) {
-        self.engine.lock().unwrap().trading.create_position(
-            "MSFT".to_string(),
-            Num::from(120 as i8),
-            Num::from(10 as i8),
-            order::Side::Buy,
-        );
+    pub async fn create_position(&mut self, mkt_signal: &MktSignal) {
+        self.engine.lock().unwrap().create_position(mkt_signal);
     }
 
     fn get_gross_position_value(&self) -> Num {

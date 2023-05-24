@@ -103,7 +103,7 @@ impl Trading {
 
     pub async fn create_position(
         &mut self,
-        symbol: String,
+        symbol: &String,
         target_price: Num,
         position_size: Num,
         side: order::Side,

@@ -29,7 +29,7 @@ impl Locker {
         }
     }
 
-    pub fn monitor_trade(&mut self, symbol: &String, entry_price: Num) {
+    pub fn monitor_trade(&mut self, symbol: &String, entry_price: &Num) {
         let stop = TrailingStop::new(symbol.clone(), entry_price.to_f64().unwrap(), 7.0);
         if self.stops.contains_key(symbol) {
             *self.stops.get_mut(symbol).unwrap() = stop;

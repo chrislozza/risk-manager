@@ -2,37 +2,37 @@ use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::prelude::*;
 use std::vec::Vec;
+use std::collections::HashMap;
 
-#[derive(Debug, Deserialize, Serialize)]
-struct StrategyCfg {
-    name: String,
-    stop: String,
-    max_positions: i8,
-    port_weight: i8,
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct StrategyCfg {
+    pub name: String,
+    pub max_positions: i8,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-struct DatabaseCfg {
-    host: String,
-    port: String,
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct DatabaseCfg {
+    pub host: String,
+    pub port: String,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-pub struct Config {
-    gcp_sub: String,
-    service_client: String,
-    database: Option<DatabaseCfg>,
-    strategy: Vec<StrategyCfg>,
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Settings {
+    pub gcp_sub: String,
+    pub service_client: String,
+    pub database: Option<DatabaseCfg>,
+    pub strategies: HashMap<String, StrategyCfg>,
 }
 
-pub struct Settings {}
+#[derive(Debug)]
+pub struct Config {}
 
-impl Settings {
-    pub fn read_config_file(path: &str) -> Result<Config, Box<dyn std::error::Error>> {
+impl Config {
+    pub fn read_config_file(path: &str) -> Result<Settings, Box<dyn std::error::Error>> {
         let mut file = File::open(path)?;
         let mut contents = String::new();
         file.read_to_string(&mut contents)?;
-        let config: Config = serde_json::from_str(&contents)?;
-        Ok(config)
+        let settings: Settings = serde_json::from_str(&contents)?;
+        Ok(settings)
     }
 }
