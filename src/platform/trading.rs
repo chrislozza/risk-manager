@@ -40,7 +40,7 @@ impl Trading {
         self.sender.subscribe()
     }
 
-    pub async fn startup(&mut self) -> Result<(HashMap<String, MktPosition>, HashMap<String, MktOrder>), ()> {
+    pub async fn startup(&mut self) -> (HashMap<String, MktPosition>, HashMap<String, MktOrder>) {
         let orders = match self.get_orders().await {
             Ok(val) => val,
             Err(err) => panic!("{err:?}"),
@@ -56,7 +56,7 @@ impl Trading {
             }
             _ => (),
         };
-        Ok((positions, orders))
+        (positions, orders)
     }
 
     pub async fn shutdown(&self) {

@@ -10,7 +10,7 @@ pub struct WebHook {
 }
 
 impl WebHook { 
-    pub async fn new(settings: Settings) -> Self {
+    pub async fn new(_settings: Settings) -> Self {
         WebHook {
             cancel_token: CancellationToken::new()
         }

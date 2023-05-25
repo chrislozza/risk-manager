@@ -1,4 +1,4 @@
-use std::sync::atomic::AtomicBool;
+
 use std::sync::{Arc, Mutex};
 
 use apca::api::v2::updates;
@@ -45,7 +45,7 @@ impl StreamHandler {
     }
 
     pub async fn subscribe_to_order_updates(&self) -> Result<(), ()> {
-        let (mut stream, subscription) = self
+        let (mut stream, _subscription) = self
             .client
             .lock()
             .unwrap()
@@ -90,7 +90,7 @@ impl StreamHandler {
                     .await
                 {
                     Err(err) => error!("Error thrown in websocket {}", err),
-                    _ => return (),
+                    _ => return,
                 };
             }
             info!("Trading updates ended");

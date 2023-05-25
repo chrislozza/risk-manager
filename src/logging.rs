@@ -13,7 +13,6 @@ impl log::Log for SimpleLogger {
             let current_time = Local::now();
             let timestamp = current_time.format("%Y-%m-%d %H:%M:%S").to_string();
             let location = format!("{}:{}", record.file().unwrap(), record.line().unwrap());
-
             println!(
                 "{:<30} {:<10} {:<40.40}  -  {}",
                 timestamp,

@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::prelude::*;
-use std::vec::Vec;
+
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

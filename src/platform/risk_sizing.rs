@@ -7,7 +7,7 @@ pub struct MaxLeverage {}
 impl MaxLeverage {
     pub fn get_port_weight(
         buying_power: Num,
-        portfolio_size: Num,
+        _portfolio_size: Num,
         gross_position: Num,
         equity_with_loan: Num,
     ) -> Num {

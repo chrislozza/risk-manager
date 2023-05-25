@@ -1,14 +1,14 @@
-use apca::api::v2::order;
+
 use apca::{ApiInfo, Client};
-use log::{info, error};
+use log::{info};
 use std::sync::{Arc, Mutex};
 use url::Url;
-use std::collections::HashMap;
+
 
 use num_decimal::Num;
 use tokio::sync::mpsc;
 use tokio::sync::broadcast;
-use tokio::time;
+
 
 mod account;
 mod engine;
@@ -26,9 +26,9 @@ use engine::Engine;
 use mktdata::MktData;
 use mktorder::MktOrder;
 use mktposition::MktPosition;
-use risk_sizing::MaxLeverage;
+
 use trading::Trading;
-use super::events::{Event::*, Shutdown, Event};
+use super::events::{Shutdown, Event};
 use crate::Settings;
 use crate::events::MktSignal;
 
@@ -59,16 +59,7 @@ impl Platform {
     }
 
     async fn startup(&self) -> Result<(broadcast::Receiver<Event>, broadcast::Receiver<Event>), ()> {
-        let mut engine = self.engine.lock().unwrap();
-        engine.account.startup().await;
-        let (positions, orders) = engine.trading.startup().await?;
-        engine.mktdata.startup(&orders, &positions).await;
-        engine.orders = orders;
-        engine.positions = positions;
-        Ok((
-            engine.trading.stream_reader(),
-            engine.mktdata.stream_reader(),
-        ))
+        Ok(self.engine.lock().unwrap().startup().await)
     }
 
     pub async fn shutdown(&self) {
@@ -113,27 +104,20 @@ impl Platform {
                 info!("Taking a loop in the platform");
                 tokio::select!(
                     event = trading_reader.recv() => {
-                        match event {
-                            Ok(event) => {
-                                info!("Found a trade {event:?}");
-                                Self::handle_event(&event, &engine_clone).await;
-                            },
-                            _ => (),
-                        }
+                        if let Ok(event) = event {
+                            info!("Found a trade {event:?}");
+                            Self::handle_event(&event, &engine_clone).await;
+                        };
                     }
                     event = mktdata_reader.recv() => {
-                        match event {
-                            Ok(event) => {
-                                info!("Found a mktdata {event:?}");
-                                Self::handle_event(&event, &engine_clone).await;
-                            },
-                            _ => (),
-                        }
+                        if let Ok(event) = event {
+                            info!("Found a mktdata {event:?}");
+                            Self::handle_event(&event, &engine_clone).await;
+                        };
                     }
                     _event = shutdown_reader.recv() => {
                         break;
-                    },
-                    );
+                    });
             }
         }).await;
         info!("Returning from the loop in the platform");

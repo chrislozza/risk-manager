@@ -15,7 +15,7 @@ use settings::{Settings, Config};
 use events::Event;
 
 use tokio::signal;
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{mpsc};
 
 use log::{LevelFilter, SetLoggerError};
 
@@ -62,13 +62,10 @@ async fn main() {
         )
         .get_matches();
 
-    match log_init() {
-        Err(err) => {
-            println!("Failed to start logging, error: {err}");
-            std::process::exit(1);
-        }
-        _ => (),
-    };
+    if let Err(err) = log_init() {
+        println!("Failed to start logging, error: {err}");
+        std::process::exit(1);
+    }
     let key = cmdline_args.value_of("KEY").unwrap();
     let secret = cmdline_args.value_of("SECRET").unwrap();
     let config = cmdline_args.value_of("CONFIG").unwrap();
@@ -94,12 +91,9 @@ async fn main() {
         info!("Taking a loop in the app");
         tokio::select! {
             event = receive_mkt_signals.recv() => {
-                match event.unwrap() {
-                    Event::MktSignal(event) => {
-                        info!("Recieved an event {event:?}, creating new position");
-                        platform.create_position(&event).await;
-                    },
-                    _ => (),
+                if let Event::MktSignal(event) = event.unwrap() {
+                    info!("Recieved an event {event:?}, creating new position");
+                    platform.create_position(&event).await;
                 }
             }
             _ = signal::ctrl_c() => {

@@ -3,7 +3,7 @@ use apca::data::v2::stream;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use std::sync::{Arc, Mutex};
-use log::{info, error};
+use log::{info};
 
 mod pub_sub;
 mod web_hook;

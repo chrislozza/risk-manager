@@ -1,7 +1,7 @@
 use log::{info, error};
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
-use std::cmp;
+
 use apca::api::v2::updates;
 use apca::data::v2::stream;
 
@@ -10,15 +10,18 @@ use super::Locker;
 use super::MktData;
 use super::MktOrder;
 use super::Trading;
-use super::Event;
+
 use super::MktPosition;
+use super::Event;
 
 use crate::Settings;
 use crate::events::MktSignal;
 
 use num_decimal::Num;
-use tokio::sync::mpsc;
+
 use tokio::sync::broadcast;
+
+
 
 pub struct Engine {
     pub account: AccountDetails,
@@ -47,6 +50,18 @@ impl Engine {
             positions: HashMap::default(),
             orders: HashMap::default(),
         }))
+    }
+
+    pub async fn startup(&mut self) -> (broadcast::Receiver<Event>, broadcast::Receiver<Event>) {
+        self.account.startup().await;
+        let (positions, orders) = self.trading.startup().await;
+        self.mktdata.startup(&orders, &positions).await;
+        self.orders = orders;
+        self.positions = positions;
+        (
+            self.trading.stream_reader(),
+            self.mktdata.stream_reader(),
+        )
     }
 
     pub async fn shutdown(&self) {

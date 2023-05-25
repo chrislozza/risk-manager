@@ -1,18 +1,18 @@
 use google_cloud_default::WithAuthExt;
-use google_cloud_gax::grpc::Status;
-use google_cloud_pubsub::subscription::{ReceiveConfig, SubscriptionConfig};
-use google_cloud_googleapis::pubsub::v1::PubsubMessage;
+
+
+
 use google_cloud_pubsub::client::{Client, ClientConfig};
 
 use log::info;
 
-use std::time::Duration;
+
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
-use futures_util::StreamExt as _;
+
 
 use crate::Settings;
-use super::{Event, Event::*};
+use super::Event;
 use super::MktSignal;
 
 pub struct GcpPubSub {
@@ -21,7 +21,7 @@ pub struct GcpPubSub {
 }
 
 impl GcpPubSub { 
-    pub async fn new(settings: Settings) -> Self {
+    pub async fn new(_settings: Settings) -> Self {
         let config = ClientConfig::default().with_auth().await.unwrap();
         GcpPubSub {
             client: Client::new(config).await.unwrap(),
@@ -38,8 +38,8 @@ impl GcpPubSub {
         //subscribe
         let cancel_receiver = self.cancel_token.clone();
         info!("Taking a loop in the run");
-        let handle = tokio::spawn(async move {
-            let _ = subscriber 
+        let _handle = tokio::spawn(async move {
+            subscriber 
                 .receive(
                     move |message, _ctx| {
                         info!("Reieved a message pubsub");
@@ -54,7 +54,7 @@ impl GcpPubSub {
                     },
                     cancel_receiver,
                     None,
-                )
+                    )
                 .await.unwrap();
         }).await;
         info!("After task spawned pubsub");
