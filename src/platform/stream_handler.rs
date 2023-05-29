@@ -1,4 +1,3 @@
-
 use std::sync::{Arc, Mutex};
 
 use apca::api::v2::updates;
@@ -40,7 +39,7 @@ impl StreamHandler {
         StreamHandler {
             client,
             subscriber,
-            is_alive: Arc::new(Mutex::new(false)),
+            is_alive: Arc::new(Mutex::new(true)),
         }
     }
 

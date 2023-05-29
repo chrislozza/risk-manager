@@ -6,7 +6,6 @@ pub fn print_type<T>(_: &T) -> &'static str {
     type_name::<T>()
 }
 
-
 macro_rules! float_to_num {
     ($value: expr, $denom: ) => {
         Num::new($value, $denom)

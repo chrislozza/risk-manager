@@ -1,5 +1,5 @@
-use log::{Level, Metadata, Record};
 use chrono::prelude::*;
+use log::{Level, Metadata, Record};
 
 pub struct SimpleLogger;
 

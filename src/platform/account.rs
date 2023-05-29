@@ -1,9 +1,9 @@
 use apca::api::v2::account;
 use apca::Client;
 use log::{error, info};
+use num_decimal::Num;
 use std::sync::{Arc, Mutex};
 use std::{thread, time::Duration};
-use num_decimal::Num;
 
 #[derive(Debug)]
 pub struct AccountDetails {
@@ -31,7 +31,7 @@ impl AccountDetails {
     }
 
     pub fn buying_power(&self) -> Num {
-        return self.account_details.clone().unwrap().buying_power
+        return self.account_details.clone().unwrap().buying_power;
     }
 
     pub async fn request_account_details(

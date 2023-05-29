@@ -1,11 +1,6 @@
-
-
-
-
 use apca::data::v2::stream;
 use log::info;
 use std::collections::HashMap;
-
 
 use num_decimal::Num;
 
@@ -42,12 +37,12 @@ impl Locker {
         let symbol = trade.symbol.as_str();
         if !self.stops.contains_key(symbol) {
             info!("Symbol: {symbol:?} not being tracked in locker");
-            return false
+            return false;
         }
         let trade_price = trade.trade_price.to_f64().unwrap();
         let stop = self.stops.get_mut(symbol).unwrap();
         let stop_price = stop.price_update(trade_price);
-        return stop_price > trade_price
+        return stop_price > trade_price;
     }
 }
 

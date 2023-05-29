@@ -2,9 +2,9 @@ use apca::api::v2::{asset, order, orders, position, positions};
 use apca::Client;
 use log::{error, info, warn};
 use num_decimal::Num;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::{thread, time::Duration};
-use std::collections::HashMap;
 
 use tokio::sync::broadcast;
 
@@ -154,7 +154,9 @@ impl Trading {
                 .client
                 .lock()
                 .unwrap()
-                .issue::<position::Delete>(&asset::Symbol::Sym(position.get_position().symbol.to_string()))
+                .issue::<position::Delete>(&asset::Symbol::Sym(
+                    position.get_position().symbol.to_string(),
+                ))
                 .await
             {
                 Ok(val) => {
@@ -205,7 +207,9 @@ impl Trading {
         false
     }
 
-    async fn get_orders(&self) -> Result<HashMap<String, MktOrder>, apca::RequestError<orders::GetError>> {
+    async fn get_orders(
+        &self,
+    ) -> Result<HashMap<String, MktOrder>, apca::RequestError<orders::GetError>> {
         let mut retry = 5;
         loop {
             let request = orders::OrdersReq::default();

@@ -3,19 +3,20 @@ use log::{error, info};
 
 extern crate libc;
 
+mod events;
 mod logging;
 mod platform;
 mod settings;
-mod events;
 
-use logging::SimpleLogger;
-use events::EventPublisher;
-use platform::Platform;
-use settings::{Settings, Config};
 use events::Event;
+use events::EventPublisher;
+use logging::SimpleLogger;
+use platform::Platform;
+use settings::{Config, Settings};
 
 use tokio::signal;
-use tokio::sync::{mpsc};
+use tokio::sync::mpsc;
+use tokio::time::{sleep, Duration};
 
 use log::{LevelFilter, SetLoggerError};
 
@@ -87,8 +88,8 @@ async fn main() {
 
     platform.run().await;
     publisher.run(&send_mkt_signals).await;
+    info!("Taking a loop in the app");
     loop {
-        info!("Taking a loop in the app");
         tokio::select! {
             event = receive_mkt_signals.recv() => {
                 if let Event::MktSignal(event) = event.unwrap() {
@@ -101,7 +102,9 @@ async fn main() {
                 publisher.shutdown().await;
                 platform.shutdown().await;
                 break
-            },
+            }
+            _ = sleep(Duration::from_millis(10)) => {
+            }
         }
     }
     std::process::exit(0);

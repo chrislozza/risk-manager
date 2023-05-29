@@ -1,8 +1,8 @@
 use apca::data::v2::stream;
 use apca::Client;
 use log::{error, info};
-use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use tokio::sync::broadcast;
 

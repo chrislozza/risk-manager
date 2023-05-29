@@ -1,6 +1,6 @@
-use log::{info, error};
-use std::sync::{Arc, Mutex};
+use log::{error, info};
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use apca::api::v2::updates;
 use apca::data::v2::stream;
@@ -11,17 +11,15 @@ use super::MktData;
 use super::MktOrder;
 use super::Trading;
 
-use super::MktPosition;
 use super::Event;
+use super::MktPosition;
 
-use crate::Settings;
 use crate::events::MktSignal;
+use crate::Settings;
 
 use num_decimal::Num;
 
 use tokio::sync::broadcast;
-
-
 
 pub struct Engine {
     pub account: AccountDetails,
@@ -58,10 +56,7 @@ impl Engine {
         self.mktdata.startup(&orders, &positions).await;
         self.orders = orders;
         self.positions = positions;
-        (
-            self.trading.stream_reader(),
-            self.mktdata.stream_reader(),
-        )
+        (self.trading.stream_reader(), self.mktdata.stream_reader())
     }
 
     pub async fn shutdown(&self) {
@@ -76,11 +71,14 @@ impl Engine {
     pub fn get_mktpositions(&self) -> &HashMap<String, MktPosition> {
         return &self.positions;
     }
-    
+
     pub async fn order_update(&mut self, order_update: &updates::OrderUpdate) {
         match order_update.event {
-            updates::OrderStatus::Filled => self.locker.monitor_trade(&order_update.order.symbol, &order_update.order.average_fill_price.clone().unwrap()),
-            _ => info!("Not listening to event {0:?}", order_update.event)
+            updates::OrderStatus::Filled => self.locker.monitor_trade(
+                &order_update.order.symbol,
+                &order_update.order.average_fill_price.clone().unwrap(),
+            ),
+            _ => info!("Not listening to event {0:?}", order_update.event),
         }
     }
 
@@ -102,11 +100,12 @@ impl Engine {
         let buying_power = self.account.buying_power();
         let capacity = self.settings.strategies.get(&mkt_signal.strategy).unwrap();
         let size = buying_power / Num::from(capacity.max_positions);
-        self.trading.create_position(&mkt_signal.symbol, price, size, mkt_signal.side).await;
+        self.trading
+            .create_position(&mkt_signal.symbol, price, size, mkt_signal.side)
+            .await;
     }
 
     pub async fn liquidate_position(&mut self) {
         self.liquidate_position();
     }
 }
-
