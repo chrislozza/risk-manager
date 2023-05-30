@@ -150,26 +150,21 @@ impl Trading {
         let mut retry = 5;
         loop {
             info!("Before the liquidate position");
-            match self
-                .client
-                .lock()
-                .unwrap()
+            let result = self.client.lock().unwrap()
                 .issue::<position::Delete>(&asset::Symbol::Sym(
                     position.get_position().symbol.to_string(),
-                ))
-                .await
+                )).await;
+            if let Ok(val) = result
             {
-                Ok(val) => {
-                    info!("Placed order {:?}", val);
-                    return true;
+                info!("Placed order {:?}", val);
+                return true;
+            }
+            else if let Err(err) = result {
+                if retry == 0 {
+                    error!("Failed to liquidate position");
+                    break;
                 }
-                Err(err) => {
-                    if retry == 0 {
-                        error!("Failed to liquidate position");
-                        break;
-                    }
-                    warn!("Retry liquidating position retries left: {retry}, err: {err:?}");
-                }
+                warn!("Retry liquidating position retries left: {retry}, err: {err:?}");
             }
             retry -= 1;
             thread::sleep(Duration::from_secs(1));

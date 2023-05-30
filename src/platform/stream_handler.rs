@@ -57,13 +57,13 @@ impl StreamHandler {
         let subscriber = self.subscriber.clone();
         let is_alive = Arc::clone(&self.is_alive);
         tokio::spawn(async move {
+            info!("In task listening for order updates");
             while *is_alive.lock().unwrap() {
                 match stream
                     .by_ref()
                     .take_until(time::sleep(time::Duration::from_secs(30)))
                     .map_err(apca::Error::WebSocket)
                     .try_for_each(|result| async {
-                        info!("Checking map home");
                         result
                             .map(|data| {
                                 let event = match data {
@@ -113,7 +113,6 @@ impl StreamHandler {
         let subscribe = subscription.subscribe(&data).boxed_local().fuse();
         // Actually subscribe with the websocket server.
 
-        info!("Before subscribe");
         let error = stream::drive(subscribe, &mut stream)
             .await
             .unwrap()
@@ -128,13 +127,13 @@ impl StreamHandler {
         let subscriber = self.subscriber.clone();
         let is_alive = Arc::clone(&self.is_alive);
         tokio::spawn(async move {
+            info!("In task listening for mktdata updates");
             while *is_alive.lock().unwrap() {
                 match stream
                     .by_ref()
                     .take_until(time::sleep(time::Duration::from_secs(30)))
                     .map_err(apca::Error::WebSocket)
                     .try_for_each(|result| async {
-                        info!("Checking map home");
                         result
                             .map(|data| {
                                 let event = match data {

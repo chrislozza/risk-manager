@@ -72,27 +72,6 @@ impl Platform {
         }
     }
 
-    async fn handle_event(event: &Event, engine: &Arc<Mutex<Engine>>) {
-        match event {
-            Event::Trade(data) => {
-                info!("Trade received {data:?}");
-                engine.lock().unwrap().mktdata_update(&data);
-            }
-            Event::OrderUpdate(data) => {
-                engine.lock().unwrap().order_update(&data);
-                info!("Orderupdate received {data:?}");
-            }
-            Event::MktSignal(data) => {
-                info!("MarketSignal received {data:?}");
-                engine.lock().unwrap().create_position(&data);
-            }
-            Event::Shutdown(data) => {
-                info!("Shutdown received {data:?}");
-                engine.lock().unwrap().shutdown();
-            }
-        }
-    }
-
     pub async fn run(&mut self) -> Result<(), ()> {
         info!("Sending order");
 
@@ -106,15 +85,16 @@ impl Platform {
             loop {
                 tokio::select!(
                 event = trading_reader.recv() => {
-                    if let Ok(event) = event {
-                        info!("Found a trade {event:?}");
-                        Self::handle_event(&event, &engine_clone).await;
+                    if let Ok(Event::OrderUpdate(event)) = event {
+                        info!("Found a trade event: {event:?}");
+                        //engine_clone.lock().unwrap().create_position(&event);
                     };
                 }
                 event = mktdata_reader.recv() => {
-                    if let Ok(event) = event {
-                        info!("Found a mktdata {event:?}");
-                        Self::handle_event(&event, &engine_clone).await;
+                    if let Ok(Event::Trade(event)) = event {
+                        info!("Found a mkdata event: {event:?}");
+
+                        let _ = engine_clone.lock().unwrap().mktdata_update(&event);
                     };
                 }
                 _event = shutdown_reader.recv() => {

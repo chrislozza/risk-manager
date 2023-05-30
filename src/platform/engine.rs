@@ -83,6 +83,7 @@ impl Engine {
     }
 
     pub async fn mktdata_update(&mut self, mktdata_update: &stream::Trade) {
+        info!("Market update received checking locker");
         if self.locker.should_close(&mktdata_update) {
             let position = &self.positions[&mktdata_update.symbol];
             if self.trading.liquidate_position(&position).await == false {

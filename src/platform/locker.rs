@@ -68,6 +68,7 @@ impl TrailingStop {
     fn price_update(&mut self, current_price: f64) -> f64 {
         let price_change = current_price - self.high_low;
         if price_change <= 0.0 {
+            info!("No price change detected in stop");
             return self.stop_loss_level;
         }
         for pivot in self.pivot_points.iter() {
