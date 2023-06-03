@@ -2,7 +2,8 @@ use apca::data::v2::stream;
 use apca::Client;
 use log::{error, info};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use tokio::sync::broadcast;
 
@@ -47,7 +48,7 @@ impl MktData {
         for mktposition in positions.values() {
             symbols.push(mktposition.get_position().symbol.clone());
         }
-        return symbols;
+        symbols
     }
 
     pub fn stream_reader(&self) -> broadcast::Receiver<Event> {
@@ -60,7 +61,7 @@ impl MktData {
         positions: &HashMap<String, mktposition::MktPosition>,
     ) {
         let symbols = self.build_symbol_list(orders, positions);
-        if symbols.len() == 0 {
+        if symbols.is_empty() {
             info!("No symbols to subscribe to");
             return;
         }

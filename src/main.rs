@@ -1,4 +1,4 @@
-use clap::{App, Arg};
+use clap::Parser;
 use log::{error, info};
 
 extern crate libc;
@@ -26,51 +26,37 @@ fn log_init() -> Result<(), SetLoggerError> {
     log::set_logger(&LOGGER).map(|()| log::set_max_level(LevelFilter::Info))
 }
 
+
+/// Simple program to greet a person
+#[derive(Parser, Debug)]
+#[command(author = "yours truely", version, about = "learning some rust", long_about = None)]
+struct Args {
+    /// Type of the resource
+    #[arg(short, long)]
+    type_: String,
+
+    /// Key for the resource
+    #[arg(short, long)]
+    key: String,
+
+    /// Secret for the resource
+    #[arg(short, long)]
+    secret: String,
+
+    /// Path to the configuration file
+    #[arg(short, long)]
+    config_path: String,
+}
+
+
 #[tokio::main]
 async fn main() {
-    let cmdline_args = App::new("trading-app")
-        .version("0.1")
-        .author("yours truely")
-        .about("learning some rust")
-        .arg(
-            Arg::with_name("TYPE")
-                .takes_value(true)
-                .required(true)
-                .long("type")
-                .short('a')
-                .possible_values(&["paper", "live"]),
-        )
-        .arg(
-            Arg::with_name("KEY")
-                .takes_value(true)
-                .required(true)
-                .long("key")
-                .short('k'),
-        )
-        .arg(
-            Arg::with_name("SECRET")
-                .takes_value(true)
-                .required(true)
-                .long("secret")
-                .short('s'),
-        )
-        .arg(
-            Arg::with_name("CONFIG")
-                .takes_value(true)
-                .required(true)
-                .long("config")
-                .short('c'),
-        )
-        .get_matches();
-
     if let Err(err) = log_init() {
         println!("Failed to start logging, error: {err}");
         std::process::exit(1);
     }
-    let key = cmdline_args.value_of("KEY").unwrap();
-    let secret = cmdline_args.value_of("SECRET").unwrap();
-    let config = cmdline_args.value_of("CONFIG").unwrap();
-    let is_live = match cmdline_args.value_of("TYPE").unwrap() {
+    let cmdline_args = Args::parse();
+    let is_live = match cmdline_args.type_.as_str() {
         "live" => true,
         "paper" => false,
         _ => {
@@ -81,26 +67,26 @@ async fn main() {
 
     let (send_mkt_signals, mut receive_mkt_signals) = mpsc::unbounded_channel();
 
-    let settings = Config::read_config_file(config).unwrap();
-    let mut platform = Platform::new(settings.clone(), key, secret, is_live);
+    let settings = Config::read_config_file(cmdline_args.config_path.as_str()).unwrap();
+    let mut platform = Platform::new(settings.clone(), cmdline_args.key.as_str(), cmdline_args.secret.as_str(), is_live);
     let mut publisher = EventPublisher::new(settings).await;
     info!("Initialised components");
 
-    platform.run().await;
-    publisher.run(&send_mkt_signals).await;
+    let _ = platform.run().await;
+    let _ = publisher.run(&send_mkt_signals).await;
     info!("Taking a loop in the app");
     loop {
         tokio::select! {
             event = receive_mkt_signals.recv() => {
                 if let Event::MktSignal(event) = event.unwrap() {
                     info!("Recieved an event {event:?}, creating new position");
-                    platform.create_position(&event).await;
+                    let _ = platform.create_position(&event).await;
                 }
             }
             _ = signal::ctrl_c() => {
                 info!("Keyboard shutdown detected");
-                publisher.shutdown().await;
-                platform.shutdown().await;
+                let _ = publisher.shutdown().await;
+                let _ = platform.shutdown().await;
                 break
             }
             _ = sleep(Duration::from_millis(10)) => {

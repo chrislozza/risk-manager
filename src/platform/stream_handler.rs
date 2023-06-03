@@ -1,11 +1,11 @@
-use std::sync::{Arc, Mutex};
-
 use apca::api::v2::updates;
 use apca::data::v2::stream;
 use apca::Client;
 
 use log::{error, info};
 
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use tokio::sync::broadcast;
 use tokio::time;
 
@@ -47,7 +47,7 @@ impl StreamHandler {
         let (mut stream, _subscription) = self
             .client
             .lock()
-            .unwrap()
+            .await
             .subscribe::<updates::OrderUpdates>()
             .await
             .unwrap();
@@ -58,33 +58,28 @@ impl StreamHandler {
         let is_alive = Arc::clone(&self.is_alive);
         tokio::spawn(async move {
             info!("In task listening for order updates");
-            while *is_alive.lock().unwrap() {
+            while *is_alive.lock().await {
+                info!("In task listening for order updates");
                 match stream
                     .by_ref()
                     .take_until(time::sleep(time::Duration::from_secs(30)))
                     .map_err(apca::Error::WebSocket)
                     .try_for_each(|result| async {
+                        info!("Order Updates {result:?}");
                         result
-                            .map(|data| {
-                                let event = match data {
-                                    updates::OrderUpdate { event, order } => {
-                                        Event::OrderUpdate(updates::OrderUpdate { event, order })
-                                    }
-                                    _ => {
-                                        error!("Unknown error");
-                                        return;
-                                    }
-                                };
-                                match subscriber.send(event) {
-                                    Err(val) => {
-                                        error!("Sending error {val:?}");
-                                        return;
-                                    }
-                                    Err(broadcast::error::SendError(data)) => error!("{data:?}"),
-                                    Ok(_) => (),
-                                };
-                            })
-                            .map_err(apca::Error::Json)
+                        .map(|data| {
+                            let event = match data {
+                                updates::OrderUpdate { event, order } => {
+                                    info!("Order update received event: {event:?} order: {order:?}");
+                                    Event::OrderUpdate(updates::OrderUpdate { event, order })
+                                }
+                            };
+                            match subscriber.send(event) {
+                                Err(broadcast::error::SendError(data)) => error!("{data:?}"),
+                                Ok(_) => (),
+                            }
+                        })
+                        .map_err(apca::Error::Json)
                     })
                     .await
                 {
@@ -104,7 +99,7 @@ impl StreamHandler {
         let (mut stream, mut subscription) = self
             .client
             .lock()
-            .unwrap()
+            .await
             .subscribe::<stream::RealtimeData<stream::IEX>>()
             .await
             .unwrap();
@@ -128,7 +123,7 @@ impl StreamHandler {
         let is_alive = Arc::clone(&self.is_alive);
         tokio::spawn(async move {
             info!("In task listening for mktdata updates");
-            while *is_alive.lock().unwrap() {
+            while *is_alive.lock().await {
                 match stream
                     .by_ref()
                     .take_until(time::sleep(time::Duration::from_secs(30)))
@@ -144,13 +139,9 @@ impl StreamHandler {
                                     }
                                 };
                                 match subscriber.send(event) {
-                                    Err(val) => {
-                                        error!("Sending error {val:?}");
-                                        return;
-                                    }
                                     Err(broadcast::error::SendError(data)) => error!("{data:?}"),
                                     Ok(_) => (),
-                                };
+                                }
                             })
                             .map_err(apca::Error::Json)
                     })
@@ -174,7 +165,7 @@ impl StreamHandler {
         let (mut stream, mut subscription) = self
             .client
             .lock()
-            .unwrap()
+            .await
             .subscribe::<stream::RealtimeData<stream::IEX>>()
             .await
             .unwrap();
@@ -210,10 +201,9 @@ impl StreamHandler {
                             match subscriber.send(event) {
                                 Err(broadcast::error::SendError(val)) => {
                                     error!("Sending error {val:?}");
-                                    return;
                                 }
                                 Ok(_) => (),
-                            };
+                            }
                         })
                         .map_err(apca::Error::Json)
                 })

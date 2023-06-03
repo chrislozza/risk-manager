@@ -2,7 +2,8 @@ use apca::api::v2::account;
 use apca::Client;
 use log::{error, info};
 use num_decimal::Num;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use std::{thread, time::Duration};
 
 #[derive(Debug)]
@@ -26,12 +27,11 @@ impl AccountDetails {
                 panic!("{:?}", err)
             }
         };
-        info!("Pulled account details {account_details:?}");
         self.account_details = Some(account_details);
     }
 
     pub fn buying_power(&self) -> Num {
-        return self.account_details.clone().unwrap().buying_power;
+        self.account_details.clone().unwrap().buying_power
     }
 
     pub async fn request_account_details(
@@ -39,7 +39,7 @@ impl AccountDetails {
     ) -> Result<account::Account, apca::RequestError<account::GetError>> {
         loop {
             let mut retry = 5;
-            match self.client.lock().unwrap().issue::<account::Get>(&()).await {
+            match self.client.lock().await.issue::<account::Get>(&()).await {
                 Ok(val) => {
                     info!("Account Downloaded {:?}", val);
                     return Ok(val);

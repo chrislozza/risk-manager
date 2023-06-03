@@ -42,7 +42,7 @@ impl Locker {
         let trade_price = trade.trade_price.to_f64().unwrap();
         let stop = self.stops.get_mut(symbol).unwrap();
         let stop_price = stop.price_update(trade_price);
-        return stop_price > trade_price;
+        stop_price > trade_price
     }
 }
 
@@ -68,7 +68,6 @@ impl TrailingStop {
     fn price_update(&mut self, current_price: f64) -> f64 {
         let price_change = current_price - self.high_low;
         if price_change <= 0.0 {
-            info!("No price change detected in stop");
             return self.stop_loss_level;
         }
         for pivot in self.pivot_points.iter() {
@@ -88,7 +87,7 @@ impl TrailingStop {
                         continue;
                     }
                     // set trail based on zone
-                    self.stop_loss_level = self.stop_loss_level + (new_trail_factor * price_change);
+                    self.stop_loss_level += new_trail_factor * price_change;
                 }
             }
             info!(
@@ -98,6 +97,6 @@ impl TrailingStop {
             break;
         }
         self.high_low = current_price;
-        return self.stop_loss_level;
+        self.stop_loss_level
     }
 }

@@ -2,7 +2,8 @@ use apca::api::v2::updates;
 use apca::data::v2::stream;
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use log::{info};
 
 mod pub_sub;
@@ -124,16 +125,14 @@ impl EventPublisher {
     }
 
     async fn startup(&self, send_mkt_signals: &mpsc::UnboundedSender<Event>) -> Result<(), ()> {
-        {
-            let mut event_clients = self.event_clients.lock().unwrap();
-            event_clients.webhook.run(&send_mkt_signals.clone());
-            event_clients.pubsub.run(send_mkt_signals.clone()).await;
-        }
+        let event_clients = self.event_clients.lock().await;
+        let _ = event_clients.webhook.run(&send_mkt_signals.clone());
+        let _ = event_clients.pubsub.run(send_mkt_signals.clone()).await;
         Ok(())
     }
 
     pub async fn shutdown(&self) {
-        self.event_clients.lock().unwrap().shutdown();
+        self.event_clients.lock().await.shutdown();
         match self.shutdown_signal.as_ref() {
             Some(val) => val.clone().send(Event::Shutdown(Shutdown::Good)).unwrap(),
             _ => ()
@@ -160,7 +159,7 @@ impl EventPublisher {
                 );
             }
             info!("Returning from the loop in the event publisher");
-            event_clients_cpy.lock().unwrap().shutdown();
+            let _ = event_clients_cpy.lock().await.shutdown().await;
         });
         Ok(())
     }

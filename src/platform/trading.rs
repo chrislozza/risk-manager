@@ -3,7 +3,8 @@ use apca::Client;
 use log::{error, info, warn};
 use num_decimal::Num;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use std::{thread, time::Duration};
 
 use tokio::sync::broadcast;
@@ -63,44 +64,6 @@ impl Trading {
         info!("Shutdown initiated");
     }
 
-    //    async fn subscribe_to_stream(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-    //        if *self.is_alive.lock().unwrap() {
-    //            return Ok(());
-    //        }
-    //        let (mut stream, mut _subscription) = self
-    //            .client
-    //            .lock()
-    //            .unwrap()
-    //            .subscribe::<updates::OrderUpdates>()
-    //            .await?;
-    //
-    //        *self.is_alive.lock().unwrap() = true;
-    //        info!("Before the stream is off");
-    //
-    //        let is_alive = self.is_alive.clone();
-    //        tokio::spawn(async move {
-    //            while *is_alive.lock().unwrap() {
-    //                match stream
-    //                    .by_ref()
-    //                    .take_until(time::sleep(time::Duration::from_secs(30)))
-    //                    .map_err(apca::Error::WebSocket)
-    //                    .try_for_each(|result| async {
-    //                        info!("Checking map home");
-    //                        result
-    //                            .map(|data| info!("Chris {data:?}"))
-    //                            .map_err(apca::Error::Json)
-    //                    })
-    //                    .await
-    //                {
-    //                    Err(err) => error!("Error thrown in websocket {}", err),
-    //                    _ => (),
-    //                };
-    //            }
-    //            info!("Trading updates ended");
-    //        });
-    //        Ok(())
-    //    }
-
     pub async fn create_position(
         &mut self,
         symbol: &String,
@@ -121,7 +84,7 @@ impl Trading {
             match self
                 .client
                 .lock()
-                .unwrap()
+                .await
                 .issue::<order::Post>(&request)
                 .await
             {
@@ -150,7 +113,7 @@ impl Trading {
         let mut retry = 5;
         loop {
             info!("Before the liquidate position");
-            let result = self.client.lock().unwrap()
+            let result = self.client.lock().await
                 .issue::<position::Delete>(&asset::Symbol::Sym(
                     position.get_position().symbol.to_string(),
                 )).await;
@@ -179,7 +142,7 @@ impl Trading {
             match self
                 .client
                 .lock()
-                .unwrap()
+                .await
                 .issue::<order::Delete>(&order.get_order().id)
                 .await
             {
@@ -194,7 +157,6 @@ impl Trading {
                     }
                     warn!("Retry order cancelling retries left: {retry}, err: {err:?}");
                 }
-                Err(err) => panic!("Unknown error: {err:?}"),
             }
             retry -= 1;
             thread::sleep(Duration::from_secs(1));
@@ -211,7 +173,7 @@ impl Trading {
             match self
                 .client
                 .lock()
-                .unwrap()
+                .await
                 .issue::<orders::Get>(&request)
                 .await
             {
@@ -231,7 +193,6 @@ impl Trading {
                         return Err(err);
                     }
                 }
-                Err(err) => panic!("Unknown error: {err:?}"),
             }
             thread::sleep(Duration::from_secs(1));
         }
@@ -245,7 +206,7 @@ impl Trading {
             match self
                 .client
                 .lock()
-                .unwrap()
+                .await
                 .issue::<positions::Get>(&())
                 .await
             {

@@ -1,6 +1,7 @@
 use apca::{ApiInfo, Client};
-use log::info;
-use std::sync::{Arc, Mutex};
+use log::{info, debug};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use url::Url;
 
 use num_decimal::Num;
@@ -61,11 +62,11 @@ impl Platform {
     async fn startup(
         &self,
     ) -> Result<(broadcast::Receiver<Event>, broadcast::Receiver<Event>), ()> {
-        Ok(self.engine.lock().unwrap().startup().await)
+        Ok(self.engine.lock().await.startup().await)
     }
 
     pub async fn shutdown(&self) {
-        self.engine.lock().unwrap().shutdown();
+        self.engine.lock().await.shutdown().await;
         match self.shutdown_signal.as_ref() {
             Some(val) => val.clone().send(Event::Shutdown(Shutdown::Good)).unwrap(),
             _ => (),
@@ -74,10 +75,10 @@ impl Platform {
 
     pub async fn run(&mut self) -> Result<(), ()> {
         info!("Sending order");
-
         let (shutdown_sender, mut shutdown_reader) = mpsc::unbounded_channel();
         let (mut trading_reader, mut mktdata_reader) = self.startup().await.unwrap();
         info!("Startup completed in the platform");
+        
         self.shutdown_signal = Some(shutdown_sender);
         let engine_clone = Arc::clone(&self.engine);
         tokio::spawn(async move {
@@ -92,9 +93,9 @@ impl Platform {
                 }
                 event = mktdata_reader.recv() => {
                     if let Ok(Event::Trade(event)) = event {
-                        info!("Found a mkdata event: {event:?}");
+                        debug!("Found a mkdata event: {event:?}");
 
-                        let _ = engine_clone.lock().unwrap().mktdata_update(&event);
+                        engine_clone.lock().await.mktdata_update(&event).await;
                     };
                 }
                 _event = shutdown_reader.recv() => {
@@ -109,15 +110,15 @@ impl Platform {
     }
 
     pub async fn create_position(&mut self, mkt_signal: &MktSignal) {
-        self.engine.lock().unwrap().create_position(mkt_signal);
+        self.engine.lock().await.create_position(mkt_signal).await;
     }
 
-    fn get_gross_position_value(&self) -> Num {
+    async fn get_gross_position_value(&self) -> Num {
         let mut gross_position_value = Num::from(0);
-        let engine = self.engine.lock().unwrap();
+        let engine = self.engine.lock().await;
         for order in engine.get_mktorders().values() {
             gross_position_value += order.market_value();
         }
-        return gross_position_value;
+        gross_position_value
     }
 }

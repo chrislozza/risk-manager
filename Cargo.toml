@@ -7,24 +7,23 @@ edition = "2021"
 
 [dependencies]
 apca = "0.26.2"
-log = "0.4.17"
+log = "0.4.18"
 url = "2.3.1"
-clap = { version = "3.0", features = ["derive"] }
+clap = { version = "4.3.1", features = ["derive"] }
 tokio = { version = "1.28.2", features = ["macros", "rt-multi-thread", "signal", "tracing"] }
 exitcode = "1.1.2"
 serde = { version = "1.0", features = ["derive"] }
-libc = "0.2.142"
-num-decimal = {version = "0.2.4", default-features = false, features = ["num-v04", "serde"]}
+libc = "0.2.144"
+num-decimal = {version = "0.2.5", default-features = false, features = ["num-v04", "serde"]}
 futures = {version = "0.3", default-features = false}
 serde_json = "1.0.96"
 
-axum = "0.6.8"
+axum = "0.6.18"
 chrono = "0.4"
 
-
-google-cloud-default = { version = "0.2.0", features = ["pubsub"] }
-google-cloud-pubsub = "0.14.1"
-google-cloud-googleapis = { version = "0.7.0", features = ["pubsub"] }
-google-cloud-gax = "0.13.0"
+google-cloud-default = { version = "0.3.0", features = ["pubsub"] }
+google-cloud-pubsub = "0.15.0"
+google-cloud-googleapis = { version = "0.9.0", features = ["pubsub"] }
+google-cloud-gax = "0.14.2"
 tokio-util = "0.7.8"
 futures-util = "0.3.28"
