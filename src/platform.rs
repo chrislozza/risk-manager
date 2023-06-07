@@ -88,7 +88,7 @@ impl Platform {
                 event = trading_reader.recv() => {
                     if let Ok(Event::OrderUpdate(event)) = event {
                         info!("Found a trade event: {event:?}");
-                        //engine_clone.lock().unwrap().create_position(&event);
+                        engine_clone.lock().await.order_update(&event);
                     };
                 }
                 event = mktdata_reader.recv() => {

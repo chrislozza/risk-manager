@@ -3,17 +3,28 @@ use apca::api::v2::order;
 use num_decimal::Num;
 
 #[derive(Debug, Clone)]
+pub enum OrderAction {
+    Create,
+    Liquidate,
+}
+
+#[derive(Debug, Clone)]
 pub struct MktOrder {
+    action: OrderAction,
     order: order::Order,
 }
 
 impl MktOrder {
-    pub fn new(order: order::Order) -> Self {
-        MktOrder { order }
+    pub fn new(action: OrderAction, order: order::Order) -> Self {
+        MktOrder { action, order }
     }
 
     pub fn get_order(&self) -> &order::Order {
         &self.order
+    }
+
+    pub fn get_action(&self) -> &OrderAction {
+        &self.action
     }
 
     pub fn market_value(&self) -> Num {

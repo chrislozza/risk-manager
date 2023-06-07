@@ -1,4 +1,4 @@
-use log::{error, info};
+use log::{error, info, warn};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -11,6 +11,7 @@ use super::Locker;
 use super::MktData;
 use super::MktOrder;
 use super::Trading;
+use super::mktorder::OrderAction;
 
 use super::Event;
 use super::MktPosition;
@@ -81,14 +82,53 @@ impl Engine {
         &self.positions
     }
 
+    async fn update_mktpositions(&mut self) {
+        let positions = self.trading.get_positions().await;
+        self.positions = positions.unwrap();
+    }
+
     pub async fn order_update(&mut self, order_update: &updates::OrderUpdate) {
+        let mktorder = match self.orders.get(&order_update.order.symbol) {
+            Some(mktorder) => mktorder,
+            _ => 
+            {
+                warn!("Order update on untracked order {}", order_update.order.symbol);
+                return
+            }
+        };
         match order_update.event {
-            updates::OrderStatus::Filled => self.locker.monitor_trade(
-                &order_update.order.symbol,
-                &order_update.order.average_fill_price.clone().unwrap(),
-            ),
+            updates::OrderStatus::Filled => {
+            },
+            updates::OrderStatus::Canceled => {
+            },
             _ => info!("Not listening to event {0:?}", order_update.event),
         }
+    }
+
+    fn handle_cancel_reject(&self, mktorder: &MktOrder, order_update: &updates::OrderUpdate) {
+        match mktorder.get_action() {
+            OrderAction::Liquidate => {
+                self.locker.revive(
+                    &order_update.order.symbol,
+                    )},
+            _ => (),
+        };
+    }
+
+    fn handle_fill(&self, mktorder: &MktOrder, order_update: &updates::OrderUpdate) {
+        match mktorder.get_action() {
+            OrderAction::Create => {
+                self.locker.monitor_trade(
+                    &order_update.order.symbol,
+                    &order_update.order.average_fill_price.clone().unwrap(),
+                    );
+            },
+            OrderAction::Liquidate => {
+                self.locker.complete(
+                    &order_update.order.symbol,
+                    )},
+        };
+        self.update_mktpositions();
     }
 
     pub async fn mktdata_update(&mut self, mktdata_update: &stream::Trade) {

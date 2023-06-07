@@ -23,7 +23,7 @@ impl GcpPubSub {
         GcpPubSub {
             client: Client::new(config).await.unwrap(),
             cancel_token: CancellationToken::new(),
-            subscription_name: settings.gcp_sub,
+            subscription_name: settings.gcp_subscription,
         }
     }
 

@@ -4,6 +4,14 @@ use std::collections::HashMap;
 
 use num_decimal::Num;
 
+
+#[derive(PartialEq)]
+enum LockerStatus {
+    Active,
+    Holding,
+    Finished,
+}
+
 pub struct Locker {
     stops: HashMap<String, TrailingStop>,
 }
@@ -15,6 +23,7 @@ struct TrailingStop {
     pivot_points: [(i8, f64, f64); 4],
     high_low: f64,
     stop_loss_level: f64,
+    status: LockerStatus,
 }
 
 impl Locker {
@@ -33,13 +42,27 @@ impl Locker {
         }
     }
 
-    pub fn should_close(&mut self, trade: &stream::Trade) -> bool {
-        let symbol = trade.symbol.as_str();
+    pub fn complete(&mut self, symbol: &String) {
+        if let Some(stop) = self.stops.remove(symbol) {
+            stop.status = LockerStatus::Finished;
+            //write to db
+        }
+    }
+
+    pub fn revive(&mut self, symbol: &String) {
+        if let Some(stop) = self.stops.get(symbol) {
+            stop.status = LockerStatus::Active;
+            //write to db
+        }
+    }
+
+    pub fn should_close(&mut self, last_trade: &stream::Trade) -> bool {
+        let symbol = last_trade.symbol.as_str();
         if !self.stops.contains_key(symbol) {
             info!("Symbol: {symbol:?} not being tracked in locker");
-            return false;
+            return false
         }
-        let trade_price = trade.trade_price.to_f64().unwrap();
+        let trade_price = last_trade.trade_price.to_f64().unwrap();
         let stop = self.stops.get_mut(symbol).unwrap();
         let stop_price = stop.price_update(trade_price);
         stop_price > trade_price
@@ -62,20 +85,21 @@ impl TrailingStop {
             pivot_points,
             high_low: entry_price,
             stop_loss_level,
+            status: LockerStatus::Active,
         }
     }
 
     fn price_update(&mut self, current_price: f64) -> f64 {
         let price_change = current_price - self.high_low;
-        if price_change <= 0.0 {
+        if price_change <= 0.0 || self.status == LockerStatus::Holding {
             return self.stop_loss_level;
         }
         for pivot in self.pivot_points.iter() {
             let (zone, percentage_change, new_trail_factor) = pivot;
             match zone {
                 4 => {
-                    // final trail at 1%
                     if current_price > (self.entry_price * (1.0 + percentage_change)) {
+                        // final trail at 1%
                         self.stop_loss_level = current_price - (self.entry_price * 0.01)
                     } else {
                         // close distance X% -> 1%
@@ -97,6 +121,7 @@ impl TrailingStop {
             break;
         }
         self.high_low = current_price;
+        //write to db
         self.stop_loss_level
     }
 }

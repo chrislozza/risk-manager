@@ -15,12 +15,15 @@ pub struct StrategyCfg {
 pub struct DatabaseCfg {
     pub host: String,
     pub port: String,
+    pub name: String,
+    pub secret_id: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Settings {
-    pub gcp_sub: String,
+    pub gcp_subscription: String,
     pub service_client: String,
+    pub gcp_project_id: String,
     pub database: Option<DatabaseCfg>,
     pub strategies: HashMap<String, StrategyCfg>,
 }

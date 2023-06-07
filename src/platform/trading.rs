@@ -9,7 +9,7 @@ use std::{thread, time::Duration};
 
 use tokio::sync::broadcast;
 
-use super::mktorder::MktOrder;
+use super::mktorder::{MktOrder, OrderAction};
 use super::mktposition::MktPosition;
 use super::stream_handler::StreamHandler;
 use super::Event;
@@ -90,7 +90,7 @@ impl Trading {
             {
                 Ok(val) => {
                     info!("Placed order {val:?}");
-                    return Ok(MktOrder::new(val));
+                    return Ok(MktOrder::new(OrderAction::Create, val));
                 }
                 Err(apca::RequestError::Endpoint(order::PostError::NotPermitted(err))) => {
                     if retry == 0 {
@@ -182,7 +182,7 @@ impl Trading {
                     let mut orders = HashMap::default();
                     for v in val {
                         info!("Order download {v:?}");
-                        orders.insert(v.symbol.to_string(), MktOrder::new(v));
+                        orders.insert(v.symbol.to_string(), MktOrder::new(OrderAction::Create, v));
                     }
                     return Ok(orders);
                 }
@@ -198,7 +198,7 @@ impl Trading {
         }
     }
 
-    async fn get_positions(
+    pub async fn get_positions(
         &self,
     ) -> Result<HashMap<String, MktPosition>, apca::RequestError<positions::GetError>> {
         let mut retry = 5;

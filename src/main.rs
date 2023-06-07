@@ -1,12 +1,13 @@
 use clap::Parser;
 use log::{error, info};
 
-extern crate libc;
-
 mod events;
 mod logging;
 mod platform;
 mod settings;
+mod db_client;
+mod gcp_client;
+//mod passwords;
 
 use events::Event;
 use events::EventPublisher;
@@ -29,21 +30,17 @@ fn log_init() -> Result<(), SetLoggerError> {
 
 /// Simple program to greet a person
 #[derive(Parser, Debug)]
-#[command(author = "yours truely", version, about = "learning some rust", long_about = None)]
+#[command(author, version, about, long_about = None)]
 struct Args {
-    /// Type of the resource
     #[arg(short, long)]
     type_: String,
 
-    /// Key for the resource
     #[arg(short, long)]
     key: String,
 
-    /// Secret for the resource
     #[arg(short, long)]
     secret: String,
 
-    /// Path to the configuration file
     #[arg(short, long)]
     config_path: String,
 }
