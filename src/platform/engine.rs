@@ -17,6 +17,7 @@ use super::Event;
 use super::MktPosition;
 
 use crate::events::MktSignal;
+use crate::events::Side;
 use crate::Settings;
 
 use num_decimal::Num;
@@ -105,7 +106,7 @@ impl Engine {
         }
     }
 
-    fn handle_cancel_reject(&self, mktorder: &MktOrder, order_update: &updates::OrderUpdate) {
+    fn handle_cancel_reject(&mut self, mktorder: &MktOrder, order_update: &updates::OrderUpdate) {
         match mktorder.get_action() {
             OrderAction::Liquidate => {
                 self.locker.revive(
@@ -115,7 +116,7 @@ impl Engine {
         };
     }
 
-    fn handle_fill(&self, mktorder: &MktOrder, order_update: &updates::OrderUpdate) {
+    fn handle_fill(&mut self, mktorder: &MktOrder, order_update: &updates::OrderUpdate) {
         match mktorder.get_action() {
             OrderAction::Create => {
                 self.locker.monitor_trade(
@@ -144,15 +145,30 @@ impl Engine {
     }
 
     pub async fn create_position(&mut self, mkt_signal: &MktSignal) {
-        let price = Num::new((mkt_signal.price * 100.0) as i32, 100);
+        if !self.settings.strategies.contains_key(&mkt_signal.strategy) {
+            info!("Not subscribed to strategy: {}", mkt_signal.strategy);
+        }
+        let strategy_cfg = &self.settings.strategies[&mkt_signal.strategy];
+
+        let price = Num::new((mkt_signal.price.unwrap() * 100.0) as i32, 100);
         let buying_power = self.account.buying_power();
-        let capacity = self.settings.strategies.get(&mkt_signal.strategy).unwrap();
-        let size = buying_power / Num::from(capacity.max_positions);
+        let size = buying_power / Num::from(strategy_cfg.max_positions));
+        let side = Self::convert_side(&mkt_signal.side);
+        info!("Placing order for strategy: {} with fields price: {}, size: {}, side: {:?}", mkt_signal.strategy, price, size, mkt_signal.side);
         let _ = self.trading
-            .create_position(&mkt_signal.symbol, price, size, mkt_signal.side)
+            .create_position(&mkt_signal.symbol, price, size, side)
             .await;
     }
 
     pub async fn liquidate_position(&mut self) {
+//        let side = Self::convert_side(&mkt_signal.side);
+    }
+
+    fn convert_side(side: &Side) -> apca::api::v2::order::Side {
+        let side = match side {
+            Side::Buy => apca::api::v2::order::Side::Buy,
+            Side::Sell => apca::api::v2::order::Side::Sell,
+        };
+        return side
     }
 }

@@ -13,7 +13,6 @@ impl CloudLogging {
 
     pub async fn new(logging_name: &str, google_project_id: &str) -> Result<Self> {
         let subscriber = tracing_subscriber::fmt()
-            .with_env_filter("gcloud_sdk=info")
             .finish();
         tracing::subscriber::set_global_default(subscriber)?;
 

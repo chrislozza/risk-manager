@@ -1,6 +1,7 @@
 use apca::api::v2::updates;
 use apca::data::v2::stream;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer};
+use serde_json::Value;
 use tokio::sync::mpsc;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -29,61 +30,97 @@ pub enum Event {
     Shutdown(Shutdown)
 }
 
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone)]
 pub enum PortAction {
     Create,
     Liquidate,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+impl<'de> serde::Deserialize<'de> for PortAction {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value: u8 = Deserialize::deserialize(deserializer)?;
+        match value {
+            1 => Ok(PortAction::Create),
+            2 => Ok(PortAction::Liquidate),
+            _ => Err(serde::de::Error::custom("Invalid PortAction value")),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum Direction {
     Long,
     Short,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+impl<'de> serde::Deserialize<'de> for Direction {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value: u8 = Deserialize::deserialize(deserializer)?;
+        match value {
+            1 => Ok(Direction::Long),
+            2 => Ok(Direction::Short),
+            _ => Err(serde::de::Error::custom("Invalid Direction value")),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Side {
+    Buy,
+    Sell,
+}
+
+impl<'de> serde::Deserialize<'de> for Side {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value: u8 = Deserialize::deserialize(deserializer)?;
+        match value {
+            1 => Ok(Side::Buy),
+            2 => Ok(Side::Sell),
+            _ => Err(serde::de::Error::custom("Invalid Side value")),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum Source {
     Email,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+
+impl<'de> serde::Deserialize<'de> for Source {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value: u8 = Deserialize::deserialize(deserializer)?;
+        match value {
+            1 => Ok(Source::Email),
+            _ => Err(serde::de::Error::custom("Invalid Source value")),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct MktSignal {
     pub strategy: String,
     pub symbol: String,
-    pub side: apca::api::v2::order::Side,
+    pub side: Side,
     pub action: PortAction,
     pub direction: Direction,
     pub source: Source,
-
-    #[serde(default = "default_price")]
-    pub price: f64,
-
-    #[serde(default = "default_primary_exchange")]
-    pub primary_exchange: String,
-
-    #[serde(default = "default_is_dirty")]
-    pub is_dirty: bool,
-
-    #[serde(default = "default_amount")]
-    pub amount: f64,
-}
-
-// Default value functions
-fn default_price() -> f64 {
-    0.0
-}
-
-fn default_primary_exchange() -> String {
-    "SMART".to_string()
-}
-
-fn default_is_dirty() -> bool {
-    false
-}
-
-fn default_amount() -> f64 {
-    1.0
+    pub price: Option<f64>,
+    pub primary_exchange: Option<String>,
+    pub is_dirty: Option<bool>,
+    pub amount: Option<f64>,
 }
 
 struct EventClients {

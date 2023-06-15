@@ -5,13 +5,12 @@ use std::io::prelude::*;
 
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct StrategyCfg {
-    pub name: String,
     pub max_positions: i8,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct DatabaseCfg {
     pub host: String,
     pub port: String,
@@ -19,7 +18,7 @@ pub struct DatabaseCfg {
     pub secret_id: String,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct Settings {
     pub gcp_subscription: String,
     pub service_client: String,

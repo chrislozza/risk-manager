@@ -23,6 +23,7 @@ struct TrailingStop {
     pivot_points: [(i8, f64, f64); 4],
     high_low: f64,
     stop_loss_level: f64,
+    zone: i8,
     status: LockerStatus,
 }
 
@@ -43,14 +44,14 @@ impl Locker {
     }
 
     pub fn complete(&mut self, symbol: &String) {
-        if let Some(stop) = self.stops.remove(symbol) {
+        if let Some(mut stop) = self.stops.remove(symbol) {
             stop.status = LockerStatus::Finished;
             //write to db
         }
     }
 
     pub fn revive(&mut self, symbol: &String) {
-        if let Some(stop) = self.stops.get(symbol) {
+        if let Some(stop) = self.stops.get_mut(symbol) {
             stop.status = LockerStatus::Active;
             //write to db
         }
@@ -85,6 +86,7 @@ impl TrailingStop {
             pivot_points,
             high_low: entry_price,
             stop_loss_level,
+            zone: 0,
             status: LockerStatus::Active,
         }
     }
@@ -114,10 +116,13 @@ impl TrailingStop {
                     self.stop_loss_level += new_trail_factor * price_change;
                 }
             }
-            info!(
-                "Price update for symbol: {}, new stop level: {} in zone: {}",
-                self.symbol, self.stop_loss_level, zone
-            );
+            if *zone > self.zone {
+                info!(
+                    "Price update for symbol: {}, new stop level: {} in zone: {}",
+                    self.symbol, self.stop_loss_level, zone
+                    );
+                self.zone = *zone;
+            }
             break;
         }
         self.high_low = current_price;

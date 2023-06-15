@@ -2,10 +2,12 @@ use google_cloud_default::WithAuthExt;
 
 use google_cloud_pubsub::client::{Client, ClientConfig};
 
-use log::info;
+use log::{info, warn};
 
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
+
+use std::collections::HashMap;
 
 use super::Event;
 use super::MktSignal;
@@ -40,16 +42,23 @@ impl GcpPubSub {
             subscriber
                 .receive(
                     move |message, _ctx| {
-                        info!("Reieved a message pubsub");
                         let s2 = send_mkt_signals.clone();
                         async move {
                             let _ = message.ack().await;
                             let data = std::str::from_utf8(&message.message.data)
                                 .unwrap()
                                 .to_string();
-                            let package: MktSignal = serde_json::from_str(&data).unwrap();
-                            info!("Data pulled from pubsub {package:?}");
-                            let _ = s2.send(Event::MktSignal(package));
+                            let package: HashMap<String, String> = serde_json::from_str(&data).unwrap();
+                            let payload = &package["payload"];
+
+                            let signal = serde_json::from_str::<MktSignal>(&payload);
+                            if let Ok(event) = serde_json::from_str::<MktSignal>(&payload) {
+                                info!("Data pulled from pubsub {event:?}");
+                                let _ = s2.send(Event::MktSignal(event));
+                            }
+                            else {
+                                warn!("Failed to parse unknown message");
+                            }
                         }
                     },
                     cancel_receiver,

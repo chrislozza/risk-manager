@@ -147,10 +147,11 @@ impl StreamHandler {
                     })
                     .await
                 {
+                    Err(apca::Error::WebSocket(err)) => error!("Error thrown in websocket {err:?}"), 
                     Err(err) => {
                         error!("Error thrown in websocket {err:?}");
                         return;
-                    }
+                    },
                     _ => (),
                 };
             }
