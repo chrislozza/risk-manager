@@ -59,7 +59,6 @@ impl StreamHandler {
         tokio::spawn(async move {
             info!("In task listening for order updates");
             while *is_alive.lock().await {
-                info!("In task listening for order updates");
                 match stream
                     .by_ref()
                     .take_until(time::sleep(time::Duration::from_secs(30)))
@@ -70,7 +69,6 @@ impl StreamHandler {
                         .map(|data| {
                             let event = match data {
                                 updates::OrderUpdate { event, order } => {
-                                    info!("Order update received event: {event:?} order: {order:?}");
                                     Event::OrderUpdate(updates::OrderUpdate { event, order })
                                 }
                             };
@@ -147,7 +145,12 @@ impl StreamHandler {
                     })
                     .await
                 {
-                    Err(apca::Error::WebSocket(err)) => error!("Error thrown in websocket {err:?}"), 
+                    Err(apca::Error::WebSocket(err)) => {
+                        error!("Error thrown in websocket {err:?}");
+                        if stream.is_done() {
+                            error!("websocket is done, should restart?");
+                        }
+                    }, 
                     Err(err) => {
                         error!("Error thrown in websocket {err:?}");
                         return;
@@ -189,7 +192,6 @@ impl StreamHandler {
                 .take_until(time::sleep(time::Duration::from_secs(30)))
                 .map_err(apca::Error::WebSocket)
                 .try_for_each(|result| async {
-                    info!("Checking map home");
                     result
                         .map(|data| {
                             let event = match data {

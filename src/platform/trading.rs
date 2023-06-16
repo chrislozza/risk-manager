@@ -13,6 +13,7 @@ use super::mktorder::{MktOrder, OrderAction};
 use super::mktposition::MktPosition;
 use super::stream_handler::StreamHandler;
 use super::Event;
+use crate::utils::round_to;
 
 const DENOM: f32 = 100.00;
 
@@ -71,13 +72,19 @@ impl Trading {
         position_size: Num,
         side: order::Side,
     ) -> Result<MktOrder, ()> {
+
+        let limit_price = target_price.clone() * Num::new((1.07 * DENOM) as i32, DENOM as i32);
+        let stop_price = target_price * Num::new((1.01 * DENOM) as i32, DENOM as i32);
+        let amount = order::Amount::quantity(position_size.to_u64().unwrap());
+        info!("Placing order for fields limit_price: {}, stop_price: {}, amount: {:?}, side: {:?}", limit_price, stop_price, amount, side);
+
         let request = order::OrderReqInit {
             type_: order::Type::StopLimit,
-            limit_price: Some(target_price.clone() * Num::new((1.07 * DENOM) as i32, DENOM as i32)),
-            stop_price: Some(target_price * Num::new((1.01 * DENOM) as i32, DENOM as i32)),
+            limit_price: Some(round_to(limit_price, 2)),
+            stop_price: Some(round_to(stop_price, 2)),
             ..Default::default()
         }
-        .init(symbol, side, order::Amount::quantity(position_size));
+        .init(symbol, side, order::Amount::quantity(position_size.to_u64().unwrap()));
         let mut retry = 5;
         loop {
             info!("Before posting the order");

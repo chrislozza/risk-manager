@@ -7,6 +7,7 @@ mod platform;
 mod settings;
 mod db_client;
 mod gcp_client;
+mod utils;
 //mod passwords;
 
 use events::Event;

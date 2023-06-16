@@ -6,10 +6,16 @@ use num_decimal::Num;
 
 
 #[derive(PartialEq)]
-enum LockerStatus {
+pub enum LockerStatus {
     Active,
-    Holding,
+    Disabled,
     Finished,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum TransactionType {
+    Order,
+    Position,
 }
 
 pub struct Locker {
@@ -25,6 +31,7 @@ struct TrailingStop {
     stop_loss_level: f64,
     zone: i8,
     status: LockerStatus,
+    t_type: TransactionType
 }
 
 impl Locker {
@@ -34,27 +41,39 @@ impl Locker {
         }
     }
 
-    pub fn monitor_trade(&mut self, symbol: &String, entry_price: &Num) {
-        let stop = TrailingStop::new(symbol.clone(), entry_price.to_f64().unwrap(), 7.0);
+    pub fn monitor_trade(&mut self, symbol: &String, entry_price: &Num, t_type: TransactionType) {
+        let stop = TrailingStop::new(symbol.clone(), entry_price.to_f64().unwrap(), 7.0, t_type);
         if self.stops.contains_key(symbol) {
+            info!("Locker monitoring update symbol: {symbol} entry price: {entry_price} transaction: {t_type:?}");
             *self.stops.get_mut(symbol).unwrap() = stop;
         } else {
+            info!("Locker monitoring new symbol: {symbol} entry price: {entry_price} transaction: {t_type:?}");
             self.stops.insert(symbol.clone(), stop);
         }
     }
 
-    pub fn complete(&mut self, symbol: &String) {
+    pub fn complete(&mut self, symbol: &str) {
         if let Some(mut stop) = self.stops.remove(symbol) {
+            info!("Locker tracking symbol: {symbol} marked as complete");
             stop.status = LockerStatus::Finished;
             //write to db
         }
     }
 
-    pub fn revive(&mut self, symbol: &String) {
+    pub fn revive(&mut self, symbol: &str) {
         if let Some(stop) = self.stops.get_mut(symbol) {
+            info!("Locker tracking symbol: {symbol} re-enabled");
             stop.status = LockerStatus::Active;
             //write to db
         }
+    }
+
+    pub fn get_transaction_type(&mut self, symbol: &str) -> &TransactionType {
+        &self.stops[symbol].t_type
+    }
+
+    pub fn get_status(&mut self, symbol: &str) -> &LockerStatus {
+        &self.stops[symbol].status
     }
 
     pub fn should_close(&mut self, last_trade: &stream::Trade) -> bool {
@@ -64,14 +83,19 @@ impl Locker {
             return false
         }
         let trade_price = last_trade.trade_price.to_f64().unwrap();
-        let stop = self.stops.get_mut(symbol).unwrap();
-        let stop_price = stop.price_update(trade_price);
-        stop_price > trade_price
+        if let Some(stop) = &mut self.stops.get_mut(symbol) {
+            let stop_price = stop.price_update(trade_price);
+            if stop_price > trade_price {
+                stop.status = LockerStatus::Disabled;
+                return true
+            }
+        }
+        return false
     }
 }
 
 impl TrailingStop {
-    fn new(symbol: String, entry_price: f64, trail_pc: f64) -> Self {
+    fn new(symbol: String, entry_price: f64, trail_pc: f64, t_type: TransactionType) -> Self {
         let pivot_points = [
             (1, (trail_pc / 100.0), 1.0),
             (2, (trail_pc * 2.0 / 100.0), 0.0),
@@ -88,12 +112,13 @@ impl TrailingStop {
             stop_loss_level,
             zone: 0,
             status: LockerStatus::Active,
+            t_type,
         }
     }
 
     fn price_update(&mut self, current_price: f64) -> f64 {
         let price_change = current_price - self.high_low;
-        if price_change <= 0.0 || self.status == LockerStatus::Holding {
+        if price_change <= 0.0 || self.status == LockerStatus::Disabled {
             return self.stop_loss_level;
         }
         for pivot in self.pivot_points.iter() {
