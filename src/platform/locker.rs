@@ -4,7 +4,6 @@ use std::collections::HashMap;
 
 use num_decimal::Num;
 
-
 #[derive(PartialEq)]
 pub enum LockerStatus {
     Active,
@@ -31,7 +30,7 @@ struct TrailingStop {
     stop_loss_level: f64,
     zone: i8,
     status: LockerStatus,
-    t_type: TransactionType
+    t_type: TransactionType,
 }
 
 impl Locker {
@@ -80,17 +79,17 @@ impl Locker {
         let symbol = last_trade.symbol.as_str();
         if !self.stops.contains_key(symbol) {
             info!("Symbol: {symbol:?} not being tracked in locker");
-            return false
+            return false;
         }
         let trade_price = last_trade.trade_price.to_f64().unwrap();
         if let Some(stop) = &mut self.stops.get_mut(symbol) {
             let stop_price = stop.price_update(trade_price);
             if stop_price > trade_price {
                 stop.status = LockerStatus::Disabled;
-                return true
+                return true;
             }
         }
-        return false
+        return false;
     }
 }
 
@@ -145,7 +144,7 @@ impl TrailingStop {
                 info!(
                     "Price update for symbol: {}, new stop level: {} in zone: {}",
                     self.symbol, self.stop_loss_level, zone
-                    );
+                );
                 self.zone = *zone;
             }
             break;

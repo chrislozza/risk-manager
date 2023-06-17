@@ -48,15 +48,15 @@ impl GcpPubSub {
                             let data = std::str::from_utf8(&message.message.data)
                                 .unwrap()
                                 .to_string();
-                            let package: HashMap<String, String> = serde_json::from_str(&data).unwrap();
+                            let package: HashMap<String, String> =
+                                serde_json::from_str(&data).unwrap();
                             let payload = &package["payload"];
 
                             let signal = serde_json::from_str::<MktSignal>(&payload);
                             if let Ok(event) = serde_json::from_str::<MktSignal>(&payload) {
                                 info!("Data pulled from pubsub {event:?}");
                                 let _ = s2.send(Event::MktSignal(event));
-                            }
-                            else {
+                            } else {
                                 warn!("Failed to parse unknown message");
                             }
                         }

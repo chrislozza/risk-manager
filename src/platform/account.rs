@@ -3,8 +3,8 @@ use apca::Client;
 use log::{error, info};
 use num_decimal::Num;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use std::{thread, time::Duration};
+use tokio::sync::Mutex;
 
 #[derive(Debug)]
 pub struct AccountDetails {

@@ -5,8 +5,8 @@ use apca::Client;
 use log::{error, info};
 
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tokio::sync::broadcast;
+use tokio::sync::Mutex;
 use tokio::time;
 
 use futures::FutureExt as _;
@@ -66,18 +66,18 @@ impl StreamHandler {
                     .try_for_each(|result| async {
                         info!("Order Updates {result:?}");
                         result
-                        .map(|data| {
-                            let event = match data {
-                                updates::OrderUpdate { event, order } => {
-                                    Event::OrderUpdate(updates::OrderUpdate { event, order })
+                            .map(|data| {
+                                let event = match data {
+                                    updates::OrderUpdate { event, order } => {
+                                        Event::OrderUpdate(updates::OrderUpdate { event, order })
+                                    }
+                                };
+                                match subscriber.send(event) {
+                                    Err(broadcast::error::SendError(data)) => error!("{data:?}"),
+                                    Ok(_) => (),
                                 }
-                            };
-                            match subscriber.send(event) {
-                                Err(broadcast::error::SendError(data)) => error!("{data:?}"),
-                                Ok(_) => (),
-                            }
-                        })
-                        .map_err(apca::Error::Json)
+                            })
+                            .map_err(apca::Error::Json)
                     })
                     .await
                 {
@@ -150,11 +150,11 @@ impl StreamHandler {
                         if stream.is_done() {
                             error!("websocket is done, should restart?");
                         }
-                    }, 
+                    }
                     Err(err) => {
                         error!("Error thrown in websocket {err:?}");
                         return;
-                    },
+                    }
                     _ => (),
                 };
             }

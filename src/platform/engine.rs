@@ -6,20 +6,20 @@ use tokio::sync::Mutex;
 use apca::api::v2::updates;
 use apca::data::v2::stream;
 
+use super::mktorder::OrderAction;
 use super::AccountDetails;
 use super::Locker;
 use super::MktData;
 use super::MktOrder;
 use super::Trading;
-use super::mktorder::OrderAction;
 
 use super::Event;
 use super::MktPosition;
 
 use crate::events::MktSignal;
 use crate::events::Side;
+use crate::platform::locker::{LockerStatus, TransactionType};
 use crate::Settings;
-use crate::platform::locker::{TransactionType, LockerStatus};
 
 use num_decimal::Num;
 
@@ -60,11 +60,19 @@ impl Engine {
         self.mktdata.startup(&orders, &positions).await;
         for mktorders in &orders {
             let order = mktorders.1.get_order();
-            self.locker.monitor_trade(&order.symbol, &order.limit_price.clone().unwrap(), TransactionType::Order);
+            self.locker.monitor_trade(
+                &order.symbol,
+                &order.limit_price.clone().unwrap(),
+                TransactionType::Order,
+            );
         }
         for mktposition in &positions {
             let position = mktposition.1.get_position();
-            self.locker.monitor_trade(&position.symbol, &position.average_entry_price, TransactionType::Position);
+            self.locker.monitor_trade(
+                &position.symbol,
+                &position.average_entry_price,
+                TransactionType::Position,
+            );
         }
         self.orders = orders;
         self.positions = positions;
@@ -93,13 +101,13 @@ impl Engine {
         match order_update.event {
             updates::OrderStatus::New => {
                 self.handle_new(order_update);
-            },
+            }
             updates::OrderStatus::Filled => {
                 self.handle_fill(order_update);
-            },
+            }
             updates::OrderStatus::Canceled => {
                 self.handle_cancel_reject(order_update);
-            },
+            }
             _ => info!("Not listening to event {0:?}", order_update.event),
         }
     }
@@ -109,11 +117,8 @@ impl Engine {
         match mktorder.get_action() {
             OrderAction::Create => {
                 self.locker.complete(&order_update.order.symbol);
-            },
-            OrderAction::Liquidate => {
-                self.locker.revive(
-                    &order_update.order.symbol,
-                    )},
+            }
+            OrderAction::Liquidate => self.locker.revive(&order_update.order.symbol),
             _ => (),
         };
     }
@@ -122,9 +127,13 @@ impl Engine {
         let mktorder = &self.orders[&order_update.order.symbol];
         match mktorder.get_action() {
             OrderAction::Create => {
-                self.locker.monitor_trade(&order_update.order.symbol, order_update.order.limit_price.as_ref().unwrap(), TransactionType::Order);
-            },
-            _ => ()
+                self.locker.monitor_trade(
+                    &order_update.order.symbol,
+                    order_update.order.limit_price.as_ref().unwrap(),
+                    TransactionType::Order,
+                );
+            }
+            _ => (),
         };
     }
 
@@ -136,22 +145,19 @@ impl Engine {
                     &order_update.order.symbol,
                     &order_update.order.average_fill_price.clone().unwrap(),
                     TransactionType::Position,
-                    );
-            },
-            OrderAction::Liquidate => {
-                self.locker.complete(
-                    &order_update.order.symbol,
-                    )},
+                );
+            }
+            OrderAction::Liquidate => self.locker.complete(&order_update.order.symbol),
         };
         self.update_mktpositions();
     }
 
     pub async fn mktdata_update(&mut self, mktdata_update: &stream::Trade) {
         if !self.locker.should_close(mktdata_update) {
-            return
+            return;
         }
         if self.locker.get_status(&mktdata_update.symbol) != &LockerStatus::Active {
-            return
+            return;
         }
         match self.locker.get_transaction_type(&mktdata_update.symbol) {
             TransactionType::Order => {
@@ -159,7 +165,7 @@ impl Engine {
                 if !(self.trading.cancel_order(order).await) {
                     error!("Dropping order cancel, failed to send to server");
                 }
-            },
+            }
             TransactionType::Position => {
                 let position = &self.positions[&mktdata_update.symbol];
                 if !(self.trading.liquidate_position(position).await) {
@@ -176,16 +182,21 @@ impl Engine {
         let strategy_cfg = &self.settings.strategies[&mkt_signal.strategy];
 
         let target_price = Num::new((mkt_signal.price.unwrap() * 100.0) as i32, 100);
-        let size = Self::size_position(&self.account.buying_power(), &target_price, strategy_cfg.max_positions);
+        let size = Self::size_position(
+            &self.account.buying_power(),
+            &target_price,
+            strategy_cfg.max_positions,
+        );
         let side = Self::convert_side(&mkt_signal.side);
-        let _ = self.trading
+        let _ = self
+            .trading
             .create_position(&mkt_signal.symbol, target_price, size, side)
             .await;
     }
 
     fn size_position(buying_power: &Num, target_price: &Num, max_positions: i8) -> Num {
         let strategy_buying_power = buying_power / Num::from(max_positions);
-        return strategy_buying_power / target_price
+        return strategy_buying_power / target_price;
     }
 
     fn convert_side(side: &Side) -> apca::api::v2::order::Side {

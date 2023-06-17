@@ -1,21 +1,18 @@
 use google_secretmanager1::{
-    api::{SecretVersion, SecretManager},
-    client::{oauth2, hyper, hyper_rustls, chrono, FieldMask},
-    Result, Error,
+    api::{SecretManager, SecretVersion},
+    client::{chrono, hyper, hyper_rustls, oauth2, FieldMask},
+    Error, Result,
 };
-
-
 
 pub fn get_password(credentials: &google_cloud_auth::Credentials) -> Result<(), Error> {
     // Load the service account JSON file.
-    let service_account_json =
-        std::fs::read_to_string(service_account_json)?;
+    let service_account_json = std::fs::read_to_string(service_account_json)?;
 
     // Create a JWT token from the service account JSON file.
     let jwt_token = google_auth::credentials::ServiceAccountCredentials::from_service_account_file(
         "service_account.json",
-        )?
-        .into_jwt();
+    )?
+    .into_jwt();
 
     // Create an OAuth2 client using the JWT token.
     let client = oauth2::Client::new(hyper::Client::new(), hyper_rustls::HttpsConnector::new())?;
@@ -39,4 +36,3 @@ pub fn get_password(credentials: &google_cloud_auth::Credentials) -> Result<(), 
 
     Ok(())
 }
-

@@ -1,12 +1,12 @@
 use clap::Parser;
 use log::{error, info};
 
+mod db_client;
 mod events;
+mod gcp_client;
 mod logging;
 mod platform;
 mod settings;
-mod db_client;
-mod gcp_client;
 mod utils;
 //mod passwords;
 
@@ -28,7 +28,6 @@ fn log_init() -> Result<(), SetLoggerError> {
     log::set_logger(&LOGGER).map(|()| log::set_max_level(LevelFilter::Info))
 }
 
-
 /// Simple program to greet a person
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -45,7 +44,6 @@ struct Args {
     #[arg(short, long)]
     config_path: String,
 }
-
 
 #[tokio::main]
 async fn main() {
@@ -66,7 +64,12 @@ async fn main() {
     let (send_mkt_signals, mut receive_mkt_signals) = mpsc::unbounded_channel();
 
     let settings = Config::read_config_file(cmdline_args.config_path.as_str()).unwrap();
-    let mut platform = Platform::new(settings.clone(), cmdline_args.key.as_str(), cmdline_args.secret.as_str(), is_live);
+    let mut platform = Platform::new(
+        settings.clone(),
+        cmdline_args.key.as_str(),
+        cmdline_args.secret.as_str(),
+        is_live,
+    );
     let mut publisher = EventPublisher::new(settings).await;
     info!("Initialised components");
 

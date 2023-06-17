@@ -1,17 +1,21 @@
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+use axum::Server;
+
 use super::Event;
 use crate::Settings;
 
 pub struct WebHook {
     cancel_token: CancellationToken,
+    server: Option<Server>,
 }
 
 impl WebHook {
     pub async fn new(_settings: Settings) -> Self {
         WebHook {
             cancel_token: CancellationToken::new(),
+            server: None,
         }
     }
 
@@ -21,16 +25,18 @@ impl WebHook {
         self.cancel_token.cancel()
     }
 
-    pub fn run(&self, _sender: &mpsc::UnboundedSender<Event>) -> Result<(), ()> {
-        //        let app = Router::new()
-        //            .route("/v1/send-order", post(move |body| post_event(body)))
-        //            .layer(CorsLayer::permissive());
-        //
-        //        axum::Server::bind(&"0.0.0.0:496".parse().unwrap())
-        //            .serve(app.into_make_service())
-        //            .await
-        //            .unwrap();
+    pub fn run(&mut self, _sender: &mpsc::UnboundedSender<Event>) -> Result<(), ()> {
+        let app = Router::new()
+            .route("/v1/send-order", post(move |body| post_event(body)))
+            .layer(CorsLayer::permissive());
 
+        let server = axum::Server::bind(&"0.0.0.0:496".parse().unwrap())
+            .serve(app.into_make_service())
+            .await
+            .unwrap();
+
+        info!("Webhook started");
+        self.server = Some(server);
         Ok(())
     }
 

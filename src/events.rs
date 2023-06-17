@@ -1,18 +1,18 @@
 use apca::api::v2::updates;
 use apca::data::v2::stream;
+use log::info;
 use serde::{Deserialize, Deserializer};
 use serde_json::Value;
-use tokio::sync::mpsc;
 use std::sync::Arc;
+use tokio::sync::mpsc;
 use tokio::sync::Mutex;
-use log::{info};
 
 mod pub_sub;
 mod web_hook;
 
-use web_hook::WebHook;
-use pub_sub::GcpPubSub;
 use super::Settings;
+use pub_sub::GcpPubSub;
+use web_hook::WebHook;
 
 use tokio::time::{sleep, Duration};
 
@@ -27,7 +27,7 @@ pub enum Event {
     Trade(stream::Trade),
     OrderUpdate(updates::OrderUpdate),
     MktSignal(MktSignal),
-    Shutdown(Shutdown)
+    Shutdown(Shutdown),
 }
 
 #[derive(Debug, Clone)]
@@ -95,7 +95,6 @@ pub enum Source {
     Email,
 }
 
-
 impl<'de> serde::Deserialize<'de> for Source {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -131,18 +130,12 @@ struct EventClients {
 pub struct EventPublisher {
     event_clients: Arc<Mutex<EventClients>>,
     shutdown_signal: Option<mpsc::UnboundedSender<Event>>,
-    settings: Settings
+    settings: Settings,
 }
 
 impl EventClients {
-    pub fn new(
-        pubsub: GcpPubSub,
-        webhook: WebHook,
-        ) -> Arc<Mutex<Self>> {
-        Arc::new(Mutex::new(EventClients {
-            pubsub,
-            webhook,
-        }))
+    pub fn new(pubsub: GcpPubSub, webhook: WebHook) -> Arc<Mutex<Self>> {
+        Arc::new(Mutex::new(EventClients { pubsub, webhook }))
     }
 
     pub async fn shutdown(&self) {
@@ -155,7 +148,10 @@ impl EventPublisher {
     pub async fn new(settings: Settings) -> Self {
         info!("Initialised publisher components");
         EventPublisher {
-            event_clients: EventClients::new(GcpPubSub::new(settings.clone()).await, WebHook::new(settings.clone()).await),
+            event_clients: EventClients::new(
+                GcpPubSub::new(settings.clone()).await,
+                WebHook::new(settings.clone()).await,
+            ),
             shutdown_signal: None,
             settings,
         }
@@ -172,7 +168,7 @@ impl EventPublisher {
         self.event_clients.lock().await.shutdown();
         match self.shutdown_signal.as_ref() {
             Some(val) => val.clone().send(Event::Shutdown(Shutdown::Good)).unwrap(),
-            _ => ()
+            _ => (),
         }
     }
 

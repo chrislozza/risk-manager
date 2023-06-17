@@ -4,8 +4,8 @@ use log::{error, info, warn};
 use num_decimal::Num;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use std::{thread, time::Duration};
+use tokio::sync::Mutex;
 
 use tokio::sync::broadcast;
 
@@ -72,11 +72,13 @@ impl Trading {
         position_size: Num,
         side: order::Side,
     ) -> Result<MktOrder, ()> {
-
         let limit_price = target_price.clone() * Num::new((1.07 * DENOM) as i32, DENOM as i32);
         let stop_price = target_price * Num::new((1.01 * DENOM) as i32, DENOM as i32);
         let amount = order::Amount::quantity(position_size.to_u64().unwrap());
-        info!("Placing order for fields limit_price: {}, stop_price: {}, amount: {:?}, side: {:?}", limit_price, stop_price, amount, side);
+        info!(
+            "Placing order for fields limit_price: {}, stop_price: {}, amount: {:?}, side: {:?}",
+            limit_price, stop_price, amount, side
+        );
 
         let request = order::OrderReqInit {
             type_: order::Type::StopLimit,
@@ -84,7 +86,11 @@ impl Trading {
             stop_price: Some(round_to(stop_price, 2)),
             ..Default::default()
         }
-        .init(symbol, side, order::Amount::quantity(position_size.to_u64().unwrap()));
+        .init(
+            symbol,
+            side,
+            order::Amount::quantity(position_size.to_u64().unwrap()),
+        );
         let mut retry = 5;
         loop {
             info!("Before posting the order");
@@ -120,16 +126,18 @@ impl Trading {
         let mut retry = 5;
         loop {
             info!("Before the liquidate position");
-            let result = self.client.lock().await
+            let result = self
+                .client
+                .lock()
+                .await
                 .issue::<position::Delete>(&asset::Symbol::Sym(
                     position.get_position().symbol.to_string(),
-                )).await;
-            if let Ok(val) = result
-            {
+                ))
+                .await;
+            if let Ok(val) = result {
                 info!("Placed order {:?}", val);
                 return true;
-            }
-            else if let Err(err) = result {
+            } else if let Err(err) = result {
                 if retry == 0 {
                     error!("Failed to liquidate position");
                     break;
@@ -210,13 +218,7 @@ impl Trading {
     ) -> Result<HashMap<String, MktPosition>, apca::RequestError<positions::GetError>> {
         let mut retry = 5;
         loop {
-            match self
-                .client
-                .lock()
-                .await
-                .issue::<positions::Get>(&())
-                .await
-            {
+            match self.client.lock().await.issue::<positions::Get>(&()).await {
                 Ok(val) => {
                     let mut positions = HashMap::default();
                     for v in val {

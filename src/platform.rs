@@ -1,5 +1,5 @@
 use apca::{ApiInfo, Client};
-use log::{info, debug};
+use log::{debug, info};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use url::Url;
@@ -78,7 +78,7 @@ impl Platform {
         let (shutdown_sender, mut shutdown_reader) = mpsc::unbounded_channel();
         let (mut trading_reader, mut mktdata_reader) = self.startup().await.unwrap();
         info!("Startup completed in the platform");
-        
+
         self.shutdown_signal = Some(shutdown_sender);
         let engine_clone = Arc::clone(&self.engine);
         tokio::spawn(async move {
