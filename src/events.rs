@@ -2,10 +2,13 @@ use apca::api::v2::updates;
 use apca::data::v2::stream;
 use log::info;
 use serde::{Deserialize, Deserializer};
-use serde_json::Value;
+
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
+
+use anyhow::Result;
 
 mod pub_sub;
 mod web_hook;
@@ -17,17 +20,10 @@ use web_hook::WebHook;
 use tokio::time::{sleep, Duration};
 
 #[derive(Debug, Clone)]
-pub enum Shutdown {
-    Good,
-    Bad,
-}
-
-#[derive(Debug, Clone)]
 pub enum Event {
     Trade(stream::Trade),
     OrderUpdate(updates::OrderUpdate),
     MktSignal(MktSignal),
-    Shutdown(Shutdown),
 }
 
 #[derive(Debug, Clone)]
@@ -137,48 +133,39 @@ impl EventClients {
     pub fn new(pubsub: GcpPubSub, webhook: WebHook) -> Arc<Mutex<Self>> {
         Arc::new(Mutex::new(EventClients { pubsub, webhook }))
     }
-
-    pub async fn shutdown(&self) {
-        self.pubsub.shutdown();
-        self.webhook.shutdown();
-    }
 }
 
 impl EventPublisher {
-    pub async fn new(settings: Settings) -> Self {
+    pub async fn new(shutdown_signal: CancellationToken, settings: Settings) -> Self {
         info!("Initialised publisher components");
         EventPublisher {
             event_clients: EventClients::new(
-                GcpPubSub::new(settings.clone()).await,
-                WebHook::new(settings.clone()).await,
+                GcpPubSub::new(shutdown_signal.clone(), settings.clone()).await,
+                WebHook::new(shutdown_signal).await,
             ),
             shutdown_signal: None,
             settings,
         }
     }
 
-    async fn startup(&self, send_mkt_signals: &mpsc::UnboundedSender<Event>) -> Result<(), ()> {
-        let event_clients = self.event_clients.lock().await;
-        let _ = event_clients.webhook.run(&send_mkt_signals.clone());
+    pub async fn shutdown(&self) -> Result<()> {
+        info!("Event publisher shutdown called");
+        Ok(())
+    }
+
+    async fn startup(&self, send_mkt_signals: &mpsc::UnboundedSender<Event>) -> Result<()> {
+        let mut event_clients = self.event_clients.lock().await;
+        let _ = event_clients.webhook.run(send_mkt_signals.clone());
         let _ = event_clients.pubsub.run(send_mkt_signals.clone()).await;
         Ok(())
     }
 
-    pub async fn shutdown(&self) {
-        self.event_clients.lock().await.shutdown();
-        match self.shutdown_signal.as_ref() {
-            Some(val) => val.clone().send(Event::Shutdown(Shutdown::Good)).unwrap(),
-            _ => (),
-        }
-    }
-
-    pub async fn run(&mut self, send_mkt_signals: &mpsc::UnboundedSender<Event>) -> Result<(), ()> {
+    pub async fn run(&mut self, send_mkt_signals: &mpsc::UnboundedSender<Event>) -> Result<()> {
         let (shutdown_sender, mut shutdown_reader) = mpsc::unbounded_channel();
         self.startup(send_mkt_signals).await.unwrap();
         info!("Startup completed in event publisher");
 
         self.shutdown_signal = Some(shutdown_sender);
-        let event_clients_cpy = Arc::clone(&self.event_clients);
         tokio::spawn(async move {
             info!("Taking a loop in the event publisher");
             loop {
@@ -192,7 +179,6 @@ impl EventPublisher {
                 );
             }
             info!("Returning from the loop in the event publisher");
-            let _ = event_clients_cpy.lock().await.shutdown().await;
         });
         Ok(())
     }

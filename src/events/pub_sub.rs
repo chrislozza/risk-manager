@@ -13,36 +13,35 @@ use super::Event;
 use super::MktSignal;
 use crate::Settings;
 
+#[derive(Debug, Clone)]
 pub struct GcpPubSub {
     client: Client,
-    cancel_token: CancellationToken,
+    shutdown_signal: CancellationToken,
     subscription_name: String,
 }
 
 impl GcpPubSub {
-    pub async fn new(settings: Settings) -> Self {
+    pub async fn new(shutdown_signal: CancellationToken, settings: Settings) -> Self {
         let config = ClientConfig::default().with_auth().await.unwrap();
         GcpPubSub {
             client: Client::new(config).await.unwrap(),
-            cancel_token: CancellationToken::new(),
+            shutdown_signal,
             subscription_name: settings.gcp_subscription,
         }
     }
 
-    pub fn shutdown(&self) {
-        self.cancel_token.cancel()
-    }
+    pub fn startup(&self) {}
 
     pub async fn run(&self, send_mkt_signals: mpsc::UnboundedSender<Event>) -> Result<(), ()> {
         info!("PubSub subscribing to {}", &self.subscription_name);
         let subscriber = self.client.subscription(&self.subscription_name);
         //subscribe
-        let cancel_receiver = self.cancel_token.clone();
+        let cancel_receiver = self.shutdown_signal.clone();
         let _handle = tokio::spawn(async move {
             subscriber
                 .receive(
                     move |message, _ctx| {
-                        let s2 = send_mkt_signals.clone();
+                        let sender = send_mkt_signals.clone();
                         async move {
                             let _ = message.ack().await;
                             let data = std::str::from_utf8(&message.message.data)
@@ -52,10 +51,9 @@ impl GcpPubSub {
                                 serde_json::from_str(&data).unwrap();
                             let payload = &package["payload"];
 
-                            let signal = serde_json::from_str::<MktSignal>(&payload);
-                            if let Ok(event) = serde_json::from_str::<MktSignal>(&payload) {
+                            if let Ok(event) = serde_json::from_str::<MktSignal>(payload) {
                                 info!("Data pulled from pubsub {event:?}");
-                                let _ = s2.send(Event::MktSignal(event));
+                                let _ = sender.send(Event::MktSignal(event));
                             } else {
                                 warn!("Failed to parse unknown message");
                             }

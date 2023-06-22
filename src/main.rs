@@ -1,5 +1,6 @@
 use clap::Parser;
 use log::{error, info};
+use tokio_util::sync::CancellationToken;
 
 mod db_client;
 mod events;
@@ -62,15 +63,17 @@ async fn main() {
     };
 
     let (send_mkt_signals, mut receive_mkt_signals) = mpsc::unbounded_channel();
+    let shutdown_signal = CancellationToken::new();
 
     let settings = Config::read_config_file(cmdline_args.config_path.as_str()).unwrap();
     let mut platform = Platform::new(
+        shutdown_signal.clone(),
         settings.clone(),
         cmdline_args.key.as_str(),
         cmdline_args.secret.as_str(),
         is_live,
     );
-    let mut publisher = EventPublisher::new(settings).await;
+    let mut publisher = EventPublisher::new(shutdown_signal.clone(), settings).await;
     info!("Initialised components");
 
     let _ = platform.run().await;
@@ -84,11 +87,14 @@ async fn main() {
                     let _ = platform.create_position(&event).await;
                 }
             }
-            _ = signal::ctrl_c() => {
-                info!("Keyboard shutdown detected");
+            _ = shutdown_signal.cancelled() => {
                 let _ = publisher.shutdown().await;
                 let _ = platform.shutdown().await;
                 break
+            }
+            _ = signal::ctrl_c() => {
+                info!("Keyboard shutdown detected");
+                shutdown_signal.cancel();
             }
             _ = sleep(Duration::from_millis(10)) => {
             }

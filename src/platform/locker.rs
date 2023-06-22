@@ -89,7 +89,7 @@ impl Locker {
                 return true;
             }
         }
-        return false;
+        false
     }
 }
 

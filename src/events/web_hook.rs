@@ -1,79 +1,86 @@
+use std::collections::HashMap;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use axum::Server;
+use axum::{response, routing, Router};
+use tower_http::cors::CorsLayer;
 
+use log::{error, info};
+
+use serde_json::{json, Value};
+
+use anyhow::Result;
+
+use super::Direction;
 use super::Event;
-use crate::Settings;
+use super::PortAction;
+use super::Side;
+use super::Source;
+use crate::events::MktSignal;
 
+async fn post_event(
+    sender: mpsc::UnboundedSender<Event>,
+    response::Json(payload): response::Json<HashMap<String, String>>,
+) -> response::Json<Value> {
+    info!("Received post from webhook, payload: {payload:?}");
+
+    let price = match str::parse::<f64>(&payload["price"]) {
+        Ok(price) => price,
+        Err(err) => {
+            error!("Failed to parse value: price");
+            return response::Json(json!({"response" : 400, "msg": "{err:?}"}));
+        }
+    };
+
+    let mktsignal = MktSignal {
+        strategy: payload["strategy"].clone(),
+        symbol: payload["symbol"].clone(),
+        side: Side::Buy,
+        action: PortAction::Create,
+        direction: Direction::Long,
+        source: Source::Email,
+        price: Some(price),
+        primary_exchange: None,
+        is_dirty: None,
+        amount: None,
+    };
+
+    let event = Event::MktSignal(mktsignal);
+    match sender.send(event) {
+        Err(err) => {
+            error!("{err:?}");
+            response::Json(json!({"response" : 400, "msg": "{err}"}))
+        }
+        Ok(_) => response::Json(json!({"response" : 200, "msg": "success"})),
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct WebHook {
-    cancel_token: CancellationToken,
-    server: Option<Server>,
+    shutdown_signal: CancellationToken,
 }
 
 impl WebHook {
-    pub async fn new(_settings: Settings) -> Self {
-        WebHook {
-            cancel_token: CancellationToken::new(),
-            server: None,
-        }
+    pub async fn new(shutdown_signal: CancellationToken) -> Self {
+        WebHook { shutdown_signal }
     }
 
-    pub fn startup(&self) {}
-
-    pub fn shutdown(&self) {
-        self.cancel_token.cancel()
-    }
-
-    pub fn run(&mut self, _sender: &mpsc::UnboundedSender<Event>) -> Result<(), ()> {
+    pub async fn run(&mut self, sender: mpsc::UnboundedSender<Event>) -> Result<()> {
         let app = Router::new()
-            .route("/v1/send-order", post(move |body| post_event(body)))
+            .route(
+                "/v1/mktsignal",
+                routing::post(move |body| post_event(sender.clone(), body)),
+            )
             .layer(CorsLayer::permissive());
 
-        let server = axum::Server::bind(&"0.0.0.0:496".parse().unwrap())
-            .serve(app.into_make_service())
-            .await
-            .unwrap();
+        let server =
+            axum::Server::bind(&"0.0.0.0:496".parse().unwrap()).serve(app.into_make_service());
 
-        info!("Webhook started");
-        self.server = Some(server);
+        let cancel_request = self.shutdown_signal.clone();
+        server.with_graceful_shutdown(async {
+            cancel_request.cancelled().await;
+        });
+
         Ok(())
     }
-
-    //    async fn post_order(Json(payload): Json<HashMap<String, String>>) -> Json<Value> {
-    //
-    //        let config = ClientConfig::default().with_auth().await.unwrap();
-    //        let client = Client::new(config).await.unwrap();
-    //
-    //        println!(
-    //            "Json payload received {:?}",
-    //            serde_json::to_string(&payload).unwrap()
-    //            );
-    //
-    //        let topic = client.topic("vibgo-alerts");
-    //        let mut publisher = topic.new_publisher(None);
-    //
-    //        let pub_client = publisher.clone();
-    //
-    //        let task: JoinHandle<Result<String, Status>> = tokio::spawn(async move {
-    //            let mut msg = PubsubMessage::default();
-    //            let order_details = match OrderDetails::new(&payload) {
-    //                Ok(var) => var,
-    //                Err(err) => {return Err(Status::failed_precondition(err))}
-    //            };
-    //            let serialised = serde_json::to_string(&order_details).unwrap();
-    //            let data = HashMap::from([("type", "alert"), ("payload", serialised.as_str())]);
-    //            msg.data = serde_json::to_string(&data).unwrap().into();
-    //            let awaiter = pub_client.publish(msg).await;
-    //            awaiter.get(None).await
-    //        });
-    //
-    //        let pub_result: Json<Value> = match task.await.unwrap() {
-    //            Ok(res) => Json(json!({"response" : 200, "msg": format!("Id:{}", res)})),
-    //            Err(err) => Json(json!({"response" : 400, "msg": err.message()})),
-    //        };
-    //
-    //        publisher.shutdown().await;
-    //        return pub_result;
-    //    }
 }

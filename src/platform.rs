@@ -4,7 +4,6 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use url::Url;
 
-use num_decimal::Num;
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::{sleep, Duration};
 
@@ -25,9 +24,10 @@ use mktdata::MktData;
 use mktorder::MktOrder;
 use mktposition::MktPosition;
 
-use super::events::{Event, Shutdown};
+use super::events::Event;
 use crate::events::MktSignal;
 use crate::Settings;
+use tokio_util::sync::CancellationToken;
 use trading::Trading;
 
 pub struct Platform {
@@ -36,7 +36,13 @@ pub struct Platform {
 }
 
 impl Platform {
-    pub fn new(settings: Settings, key: &str, secret: &str, is_live: bool) -> Self {
+    pub fn new(
+        _shutdown_signal: CancellationToken,
+        settings: Settings,
+        key: &str,
+        secret: &str,
+        is_live: bool,
+    ) -> Self {
         let api_base_url = match is_live {
             true => Url::parse("https://api.alpaca.markets").unwrap(),
             false => Url::parse("https://paper-api.alpaca.markets").unwrap(),
@@ -67,10 +73,6 @@ impl Platform {
 
     pub async fn shutdown(&self) {
         self.engine.lock().await.shutdown().await;
-        match self.shutdown_signal.as_ref() {
-            Some(val) => val.clone().send(Event::Shutdown(Shutdown::Good)).unwrap(),
-            _ => (),
-        }
     }
 
     pub async fn run(&mut self) -> Result<(), ()> {
@@ -88,7 +90,7 @@ impl Platform {
                 event = trading_reader.recv() => {
                     if let Ok(Event::OrderUpdate(event)) = event {
                         info!("Found a trade event: {event:?}");
-                        engine_clone.lock().await.order_update(&event);
+                        engine_clone.lock().await.order_update(&event).await;
                     };
                 }
                 event = mktdata_reader.recv() => {
@@ -111,14 +113,5 @@ impl Platform {
 
     pub async fn create_position(&mut self, mkt_signal: &MktSignal) {
         self.engine.lock().await.create_position(mkt_signal).await;
-    }
-
-    async fn get_gross_position_value(&self) -> Num {
-        let mut gross_position_value = Num::from(0);
-        let engine = self.engine.lock().await;
-        for order in engine.get_mktorders().values() {
-            gross_position_value += order.market_value();
-        }
-        gross_position_value
     }
 }

@@ -1,4 +1,4 @@
-use log::{error, info, warn};
+use log::{error, info};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -9,6 +9,7 @@ use apca::data::v2::stream;
 use super::mktorder::OrderAction;
 use super::AccountDetails;
 use super::Locker;
+
 use super::MktData;
 use super::MktOrder;
 use super::Trading;
@@ -104,6 +105,7 @@ impl Engine {
             }
             updates::OrderStatus::Filled => {
                 self.handle_fill(order_update);
+                self.update_mktpositions().await;
             }
             updates::OrderStatus::Canceled => {
                 self.handle_cancel_reject(order_update);
@@ -119,7 +121,6 @@ impl Engine {
                 self.locker.complete(&order_update.order.symbol);
             }
             OrderAction::Liquidate => self.locker.revive(&order_update.order.symbol),
-            _ => (),
         };
     }
 
@@ -149,7 +150,6 @@ impl Engine {
             }
             OrderAction::Liquidate => self.locker.complete(&order_update.order.symbol),
         };
-        self.update_mktpositions();
     }
 
     pub async fn mktdata_update(&mut self, mktdata_update: &stream::Trade) {
@@ -194,9 +194,17 @@ impl Engine {
             .await;
     }
 
+    fn get_gross_position_value(&self) -> Num {
+        let mut gross_position_value = Num::from(0);
+        for order in self.get_mktorders().values() {
+            gross_position_value += order.market_value();
+        }
+        gross_position_value
+    }
+
     fn size_position(buying_power: &Num, target_price: &Num, max_positions: i8) -> Num {
         let strategy_buying_power = buying_power / Num::from(max_positions);
-        return strategy_buying_power / target_price;
+        strategy_buying_power / target_price
     }
 
     fn convert_side(side: &Side) -> apca::api::v2::order::Side {

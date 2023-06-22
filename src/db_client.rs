@@ -1,7 +1,7 @@
 use super::settings::Settings;
-use log::{error, info};
+use log::info;
 use std::collections::HashMap;
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 use tokio_postgres::{Client, Error, NoTls, Statement};
 use uuid::Uuid;
 
@@ -49,10 +49,10 @@ impl PostgresConnector {
 
     async fn prepare_update_statement(
         &self,
-        table: &str,
+        _table: &str,
         values: &HashMap<&str, &str>,
     ) -> Result<Statement, Error> {
-        let mut query = format!("UPDATE your_table SET ");
+        let mut query = "UPDATE your_table SET ".to_string();
 
         let columns: Vec<String> = Vec::from_iter(values.keys().map(|s| String::from(*s)));
         let mut placeholders: String = (1..=columns.len())
@@ -70,8 +70,8 @@ impl PostgresConnector {
     }
 
     pub async fn insert(&self, table: &str, values: HashMap<&str, &str>) -> Result<()> {
-        let id = Uuid::new_v4();
-        let timestamp = SystemTime::now();
+        let _id = Uuid::new_v4();
+        let _timestamp = SystemTime::now();
         let stmt = self.prepare_insert_statement(table, &values).await?;
         let data = Vec::from_iter(values.values().map(|s| String::from(*s)));
         self.client.execute_raw(&stmt, &data[..]).await?;
@@ -85,7 +85,7 @@ impl PostgresConnector {
         Ok(())
     }
 
-    pub async fn remove(&self, table: &str, id: &str) -> Result<()> {
+    pub async fn remove(&self, _table: &str, id: &str) -> Result<()> {
         let stmt = self
             .client
             .prepare("DELETE FROM $table WHERE id = $id")
@@ -96,9 +96,9 @@ impl PostgresConnector {
 
     pub async fn fetch_single(
         &self,
-        table: &str,
-        filters: &HashMap<String, String>,
-        local_id: Option<i32>,
+        _table: &str,
+        _filters: &HashMap<String, String>,
+        _local_id: Option<i32>,
     ) -> Option<Vec<(&str, &str)>> {
         //        let mut stmt = self.client.prepare("SELECT * FROM $table WHERE id = $id").await?;
         //        let rows = self.client.query(table, &[("id", &id)]).await?;
@@ -108,14 +108,14 @@ impl PostgresConnector {
         //        }
         //        let data = row.unwrap();
         //        Some(data.iter().map(|(k, v)| (k, v)).collect())
-        return None;
+        None
     }
 
     pub async fn fetch_multi(
         &self,
-        table: &str,
-        filters: &HashMap<String, String>,
-        local_id: Option<i32>,
+        _table: &str,
+        _filters: &HashMap<String, String>,
+        _local_id: Option<i32>,
     ) -> Vec<HashMap<&str, &str>> {
         //        let mut stmt = self.client.prepare("SELECT * FROM $table WHERE $($cols = $values),*)").await?;
         //        let rows = self.client.query(table, conditions).await?;
@@ -125,7 +125,7 @@ impl PostgresConnector {
         //            data.push(data);
         //        }
         //        return data
-        return Vec::new();
+        Vec::new()
     }
 }
 

@@ -1,5 +1,6 @@
-use apca::data::v2::stream;
+use apca::data::v2::{bars, stream};
 use apca::Client;
+use chrono::{Duration, Utc};
 use log::{error, info};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -84,6 +85,24 @@ impl MktData {
         info!("Shutdown initiated");
     }
 
+    pub async fn get_historical_bars(&self, symbol: &str, days_to_lookback: i64) -> Vec<bars::Bar> {
+        match self.client.lock().await {
+            client => {
+                let today = Utc::now();
+                let start_date = today - Duration::days(days_to_lookback);
+                let end_date = today;
+                let request = bars::BarsReqInit {
+                    limit: Some(days_to_lookback as usize),
+                    ..Default::default()
+                }
+                .init(symbol, start_date, end_date, bars::TimeFrame::OneDay);
+
+                let res = client.issue::<bars::Get>(&request).await.unwrap();
+                res.bars
+            }
+        }
+    }
+
     pub async fn subscribe(&mut self, symbol: String) {
         let symbols = match self
             .stream_handler
@@ -136,122 +155,3 @@ impl MktData {
         self.symbols = symbols;
     }
 }
-//#[derive(Clone)]
-//struct StreamHandler {
-//    client: Arc<Mutex<Client>>,
-//    callbacks: Vec<Arc<Mutex<dyn Fn(stream::Trade) + Send + Sync>>>,
-//}
-//
-//impl StreamHandler {
-//    fn new(
-//        client: Arc<Mutex<Client>>,
-//        callbacks: Vec<Arc<Mutex<dyn Fn(stream::Trade) + Send + Sync>>>,
-//    ) -> Self {
-//        StreamHandler { client, callbacks }
-//    }
-//
-//    pub fn call(&mut self, trade: stream::Trade) {
-//        for callback in &self.callbacks {
-//            (callback.lock().unwrap())(trade.clone())
-//        }
-//    }
-//
-//    async fn subscribe_to_stream(
-//        &self,
-//        symbols: stream::SymbolList,
-//    ) -> Result<stream::Symbols, Box<dyn std::error::Error>> {
-//        let (mut stream, mut subscription) = self
-//            .client
-//            .lock()
-//            .unwrap()
-//            .subscribe::<stream::RealtimeData<stream::IEX>>()
-//            .await?;
-//        let mut data = stream::MarketData::default();
-//        data.set_trades(symbols);
-//        let subscribe = subscription.subscribe(&data).boxed_local().fuse();
-//        // Actually subscribe with the websocket server.
-//        info!("Before subscribe");
-//        let error = stream::drive(subscribe, &mut stream)
-//            .await
-//            .unwrap()
-//            .unwrap();
-//
-//        match error {
-//            Err(apca::Error::Str(ref e)) if e == "failed to subscribe: invalid syntax (400)" => {}
-//            Err(e) => panic!("received unexpected error: {e:?}"),
-//            _ => info!("Subcribed to mktdata trades"),
-//        }
-//
-//        let callback = Arc::new(Mutex::new(self.clone()));
-//        tokio::spawn(async move {
-//            match stream
-//                .by_ref()
-//                .take_until(time::sleep(time::Duration::from_secs(30)))
-//                .map_err(apca::Error::WebSocket)
-//                .try_for_each(|result| async {
-//                    info!("Checking map home");
-//                    result
-//                        .map(|data| match data {
-//                            stream::Data::Trade(val) => {
-//                                callback.lock().unwrap().call(val);
-//                            }
-//                            _ => info!("Unknown"),
-//                        })
-//                        .map_err(apca::Error::Json)
-//                })
-//                .await
-//            {
-//                Err(err) => error!("Error thrown in websocket {}", err),
-//                _ => (),
-//            };
-//        });
-//        Ok(subscription.subscriptions().trades.clone())
-//    }
-//
-//    async fn unsubscribe_from_stream(
-//        &self,
-//        symbols: stream::SymbolList,
-//    ) -> Result<stream::Symbols, Box<dyn std::error::Error>> {
-//        let (mut stream, mut subscription) = self
-//            .client
-//            .lock()
-//            .unwrap()
-//            .subscribe::<stream::RealtimeData<stream::IEX>>()
-//            .await?;
-//
-//        let mut data = stream::MarketData::default();
-//        data.set_bars(symbols.clone());
-//        data.set_trades(symbols);
-//
-//        let unsubscribe = subscription.unsubscribe(&data).boxed_local().fuse();
-//        let () = stream::drive(unsubscribe, &mut stream)
-//            .await
-//            .unwrap()
-//            .unwrap()
-//            .unwrap();
-//
-//        let callback = Arc::new(Mutex::new(self.clone()));
-//        tokio::spawn(async move {
-//            match stream
-//                .by_ref()
-//                .take_until(time::sleep(time::Duration::from_secs(30)))
-//                .map_err(apca::Error::WebSocket)
-//                .try_for_each(|result| async {
-//                    info!("Checking map home");
-//                    result
-//                        .map(|data| match data {
-//                            stream::Data::Trade(val) => {
-//                                callback.lock().unwrap().call(val);
-//                            }
-//                            _ => info!("Unknown"),
-//                        })
-//                        .map_err(apca::Error::Json)
-//                })
-//                .await
-//            {
-//                Err(err) => error!("Error thrown in websocket {}", err),
-//                _ => (),
-//            };
-//        });
-//        Ok(subscription.subscriptions().trades.clone())
-//    }
