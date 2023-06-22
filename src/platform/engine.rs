@@ -156,7 +156,7 @@ impl Engine {
         if !self.locker.should_close(mktdata_update) {
             return;
         }
-        if self.locker.get_status(&mktdata_update.symbol) != &LockerStatus::Active {
+        if *self.locker.get_status(&mktdata_update.symbol) != LockerStatus::Active {
             return;
         }
         match self.locker.get_transaction_type(&mktdata_update.symbol) {
@@ -176,11 +176,13 @@ impl Engine {
     }
 
     pub async fn create_position(&mut self, mkt_signal: &MktSignal) {
-        if !self.settings.strategies.contains_key(&mkt_signal.strategy) {
-            info!("Not subscribed to strategy: {}", mkt_signal.strategy);
-        }
-        let strategy_cfg = &self.settings.strategies[&mkt_signal.strategy];
-
+        let strategy_cfg = match self.settings.strategies.get(&mkt_signal.strategy) {
+            Some(strategy) => strategy,
+            _ => {
+                info!("Not subscribed to strategy: {}", mkt_signal.strategy);
+                return
+            }
+        };
         let target_price = Num::new((mkt_signal.price.unwrap() * 100.0) as i32, 100);
         let size = Self::size_position(
             &self.account.buying_power(),

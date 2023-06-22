@@ -37,8 +37,8 @@ impl GcpPubSub {
         let subscriber = self.client.subscription(&self.subscription_name);
         //subscribe
         let cancel_receiver = self.shutdown_signal.clone();
-        let _handle = tokio::spawn(async move {
-            subscriber
+        let _ = tokio::spawn(async move {
+            let _ = subscriber
                 .receive(
                     move |message, _ctx| {
                         let sender = send_mkt_signals.clone();
@@ -62,8 +62,7 @@ impl GcpPubSub {
                     cancel_receiver,
                     None,
                 )
-                .await
-                .unwrap();
+                .await;
         });
         info!("After task spawned pubsub");
         Ok(())
