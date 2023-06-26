@@ -196,6 +196,16 @@ impl Engine {
             .await;
     }
 
+    pub async fn refresh_data(&mut self) {
+        self.account.refresh_account_details().await;
+        if let Ok(positions) = self.trading.get_positions().await {
+            self.positions = positions;
+        }
+        if let Ok(orders) = self.trading.get_orders().await {
+            self.orders = orders;
+        }
+    }
+
     fn get_gross_position_value(&self) -> Num {
         let mut gross_position_value = Num::from(0);
         for order in self.get_mktorders().values() {

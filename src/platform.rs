@@ -4,8 +4,11 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use url::Url;
 
-use tokio::sync::{broadcast, mpsc};
-use tokio::time::{sleep, Duration};
+use tokio::{
+    sync,
+    time,
+};
+use chrono;
 
 mod account;
 mod engine;
@@ -32,7 +35,7 @@ use trading::Trading;
 
 pub struct Platform {
     engine: Arc<Mutex<Engine>>,
-    shutdown_signal: Option<mpsc::UnboundedSender<Event>>,
+    shutdown_signal: Option<sync::mpsc::UnboundedSender<Event>>,
 }
 
 impl Platform {
@@ -67,7 +70,7 @@ impl Platform {
 
     async fn startup(
         &self,
-    ) -> Result<(broadcast::Receiver<Event>, broadcast::Receiver<Event>), ()> {
+    ) -> Result<(sync::broadcast::Receiver<Event>, sync::broadcast::Receiver<Event>), ()> {
         Ok(self.engine.lock().await.startup().await)
     }
 
@@ -77,7 +80,7 @@ impl Platform {
 
     pub async fn run(&mut self) -> Result<(), ()> {
         info!("Sending order");
-        let (shutdown_sender, mut shutdown_reader) = mpsc::unbounded_channel();
+        let (shutdown_sender, mut shutdown_reader) = sync::mpsc::unbounded_channel();
         let (mut trading_reader, mut mktdata_reader) = self.startup().await.unwrap();
         info!("Startup completed in the platform");
 
@@ -85,6 +88,7 @@ impl Platform {
         let engine_clone = Arc::clone(&self.engine);
         tokio::spawn(async move {
             info!("Taking a loop in the platform");
+            let mut last_refresh = chrono::Utc::now();
             loop {
                 tokio::select!(
                 event = trading_reader.recv() => {
@@ -103,7 +107,11 @@ impl Platform {
                 _event = shutdown_reader.recv() => {
                     break;
                 }
-                _ = sleep(Duration::from_millis(10)) => {
+                _ = time::sleep(time::Duration::from_millis(10)) => {
+                    if last_refresh + chrono::Duration::minutes(3) < chrono::Utc::now() {
+                        engine_clone.lock().await.refresh_data().await;
+                        last_refresh = chrono::Utc::now();                    
+                    }
                 });
             }
             info!("Shutting down event loop in platform");

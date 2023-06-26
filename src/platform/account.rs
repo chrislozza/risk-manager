@@ -21,6 +21,14 @@ impl AccountDetails {
     }
 
     pub async fn startup(&mut self) {
+        self.refresh_account_details().await
+    }
+
+    pub fn buying_power(&self) -> Num {
+        self.account_details.clone().unwrap().buying_power
+    }
+
+    pub async fn refresh_account_details(&mut self) {
         let account_details = match self.request_account_details().await {
             Ok(account) => account,
             Err(err) => {
@@ -30,15 +38,11 @@ impl AccountDetails {
         self.account_details = Some(account_details);
     }
 
-    pub fn buying_power(&self) -> Num {
-        self.account_details.clone().unwrap().buying_power
-    }
-
-    pub async fn request_account_details(
+    async fn request_account_details(
         &self,
     ) -> Result<account::Account, apca::RequestError<account::GetError>> {
+        let mut retry = 5;
         loop {
-            let mut retry = 5;
             match self.client.lock().await.issue::<account::Get>(&()).await {
                 Ok(val) => {
                     info!("Account Downloaded {:?}", val);

@@ -179,7 +179,7 @@ impl Trading {
         false
     }
 
-    async fn get_orders(
+    pub async fn get_orders(
         &self,
     ) -> Result<HashMap<String, MktOrder>, apca::RequestError<orders::GetError>> {
         let mut retry = 5;

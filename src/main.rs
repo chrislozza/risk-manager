@@ -21,6 +21,8 @@ use tokio::signal;
 use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration};
 
+use std::env;
+
 use log::{LevelFilter, SetLoggerError};
 
 static LOGGER: SimpleLogger = SimpleLogger;
@@ -34,16 +36,7 @@ fn log_init() -> Result<(), SetLoggerError> {
 #[command(author, version, about, long_about = None)]
 struct Args {
     #[arg(short, long)]
-    type_: String,
-
-    #[arg(short, long)]
-    key: String,
-
-    #[arg(short, long)]
-    secret: String,
-
-    #[arg(short, long)]
-    config_path: String,
+    settings: String,
 }
 
 #[tokio::main]
@@ -53,11 +46,18 @@ async fn main() {
         std::process::exit(1);
     }
     let cmdline_args = Args::parse();
-    let is_live = match cmdline_args.type_.as_str() {
+    let settings = match Config::read_config_file(&cmdline_args.settings.as_str()) {
+        Err(val) => {
+            error!("Settings file not found: {val}");
+            std::process::exit(1);
+        },
+        Ok(val) => val,
+    };
+    let is_live = match settings.account_type.as_str() {
         "live" => true,
         "paper" => false,
-        _ => {
-            error!("Couldn't determine cmdline type");
+        val => {
+            error!("Couldn't determine cmdline type [{val:?}] account [{}]", settings.account_type);
             std::process::exit(1);
         }
     };
@@ -65,12 +65,16 @@ async fn main() {
     let (send_mkt_signals, mut receive_mkt_signals) = mpsc::unbounded_channel();
     let shutdown_signal = CancellationToken::new();
 
-    let settings = Config::read_config_file(cmdline_args.config_path.as_str()).unwrap();
+    let key = env::var("KEY").expect("Failed to read the 'key' environment variable.");
+    let secret = env::var("SECRET").expect("Failed to read the 'secret' environment variable.");
+
+    info!("Found key: {key}, secret: {secret}");
+
     let mut platform = Platform::new(
         shutdown_signal.clone(),
         settings.clone(),
-        cmdline_args.key.as_str(),
-        cmdline_args.secret.as_str(),
+        &key,
+        &secret,
         is_live,
     );
     let mut publisher = EventPublisher::new(shutdown_signal.clone(), settings).await;
