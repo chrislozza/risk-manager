@@ -90,7 +90,7 @@ impl MktData {
         {
             let today = Utc::now();
             let start_date = today - Duration::days(days_to_lookback);
-            let end_date = today;
+            let end_date = today - Duration::days(1);
             let request = bars::BarsReqInit {
                 limit: Some(days_to_lookback as usize),
                 ..Default::default()

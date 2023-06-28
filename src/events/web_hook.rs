@@ -39,7 +39,7 @@ async fn post_event(
         action: PortAction::Create,
         direction: Direction::Long,
         source: Source::Email,
-        price: Some(price),
+        price,
         primary_exchange: None,
         is_dirty: None,
         amount: None,

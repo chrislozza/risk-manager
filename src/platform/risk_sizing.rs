@@ -6,13 +6,13 @@ use ta::{DataItem, Next};
 use num_decimal::Num;
 
 use super::MktData;
-use log::info;
+
 
 use anyhow::Result;
 
-pub struct MaxLeverage {}
+pub struct RiskManagement {}
 
-impl MaxLeverage {
+impl RiskManagement {
     pub fn get_port_weight(
         buying_power: Num,
         _portfolio_size: Num,
@@ -39,7 +39,6 @@ impl MaxLeverage {
                 .build()
             {
                 atr = indicator.next(&di);
-                info!("Next atr {atr}");
             }
         }
         Ok(Num::new((atr * 100.00) as i64, 100))

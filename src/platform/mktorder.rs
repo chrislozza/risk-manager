@@ -1,5 +1,6 @@
 use apca::api::v2::order;
 
+use std::fmt;
 use num_decimal::Num;
 
 #[derive(Debug, Clone)]
@@ -7,6 +8,13 @@ pub enum OrderAction {
     Create,
     Liquidate,
 }
+
+impl fmt::Display for OrderAction {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
 
 #[derive(Debug, Clone)]
 pub struct MktOrder {
@@ -33,5 +41,15 @@ impl MktOrder {
             _ => Num::from(0),
         };
         return market_value * self.order.average_fill_price.as_ref().unwrap();
+    }
+}
+
+impl fmt::Display for MktOrder {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let quantity = match self.order.amount.clone() {
+            order::Amount::Quantity { quantity } => quantity,
+            _ => Num::from(0)
+        };
+        write!(f, "Order symbol[{}], limitPrice[{}], size[{}] status[{}]", self.order.symbol, self.order.limit_price.as_ref().unwrap(), quantity, self.action)
     }
 }

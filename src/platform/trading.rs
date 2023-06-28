@@ -72,10 +72,10 @@ impl Trading {
     ) -> Result<MktOrder, Error> {
         let limit_price = target_price.clone() * Num::new((1.07 * DENOM) as i32, DENOM as i32);
         let stop_price = target_price * Num::new((1.01 * DENOM) as i32, DENOM as i32);
-        let amount = order::Amount::quantity(position_size.to_u64().unwrap());
+        let _amount = order::Amount::quantity(position_size.to_u64().unwrap());
         info!(
             "Placing order for fields limit_price: {}, stop_price: {}, amount: {:?}, side: {:?}",
-            limit_price, stop_price, amount, side
+            limit_price, stop_price, position_size, side
         );
 
         let request = order::OrderReqInit {
@@ -100,17 +100,18 @@ impl Trading {
                 .await
             {
                 Ok(val) => {
-                    info!("Placed order {val:?}");
-                    return Ok(MktOrder::new(OrderAction::Create, val));
+                    let mktorder = MktOrder::new(OrderAction::Create, val);
+                    info!("Placed order: {}", mktorder);
+                    return Ok(mktorder)
                 }
                 Err(apca::RequestError::Endpoint(order::PostError::NotPermitted(err))) => {
                     if retry == 0 {
-                        Error::msg("Failed to post order");
+                        return Err(Error::msg("Failed to post order"))
                     }
                     warn!("Retry order posting retries left: {retry}, err: {err:?}");
                 }
                 Err(_err) => {
-                    Error::msg("Unknown error: {err:?}");
+                    return Err(Error::msg("Unknown error: {err:?}"))
                 }
             }
             retry -= 1;
@@ -189,11 +190,11 @@ impl Trading {
                 .await
             {
                 Ok(val) => {
-                    info!("Downloaded orders");
                     let mut orders = HashMap::default();
                     for v in val {
-                        info!("Order download {v:?}");
-                        orders.insert(v.symbol.to_string(), MktOrder::new(OrderAction::Create, v));
+                        let mktorder = MktOrder::new(OrderAction::Create, v);
+                        info!("Order download {}", mktorder.clone());
+                        orders.insert(mktorder.get_order().symbol.clone(), mktorder);
                     }
                     return Ok(orders);
                 }
@@ -218,8 +219,9 @@ impl Trading {
                 Ok(val) => {
                     let mut positions = HashMap::default();
                     for v in val {
-                        info!("Position download {v:?}");
-                        positions.insert(v.symbol.to_string(), MktPosition::new(v));
+                        let mktposition = MktPosition::new(v);
+                        info!("Position download {}", mktposition.clone());
+                        positions.insert(mktposition.get_position().symbol.clone(), mktposition);
                     }
                     return Ok(positions);
                 }

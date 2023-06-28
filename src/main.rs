@@ -48,7 +48,7 @@ async fn main() {
     let cmdline_args = Args::parse();
     let settings = match Config::read_config_file(cmdline_args.settings.as_str()) {
         Err(val) => {
-            error!("Settings file not found: {val}");
+            error!("Settings file error: {val}");
             std::process::exit(1);
         }
         Ok(val) => val,

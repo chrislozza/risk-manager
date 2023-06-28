@@ -23,7 +23,7 @@ use crate::events::MktSignal;
 use crate::events::Side;
 use crate::platform::locker::{LockerStatus, TransactionType};
 use crate::Settings;
-use crate::platform::risk_sizing::MaxLeverage;
+use crate::platform::risk_sizing::RiskManagement;
 
 use num_decimal::Num;
 
@@ -183,11 +183,12 @@ impl Engine {
                 return Ok(());
             }
         };
-        let target_price = Num::new((mkt_signal.price.unwrap() * 100.0) as i32, 100);
+        let target_price = Num::new((mkt_signal.price * 100.0) as i32, 100);
         let size = Self::size_position(
             &mkt_signal.symbol,
             &self.account.equity(),
             strategy_cfg.multiplier,
+            mkt_signal.price,
             &self.mktdata,
         ).await?;
         let side = Self::convert_side(&mkt_signal.side);
@@ -217,12 +218,15 @@ impl Engine {
         gross_position_value
     }
 
-    async fn size_position(symbol: &str, total_equity: &Num, multiplier: i8, mktdata: &MktData) -> Result<Num> {
+    async fn size_position(symbol: &str, total_equity: &Num, multiplier: i8, target_price: f64, mktdata: &MktData) -> Result<Num> {
+        let target_price = Num::new((target_price * 100.0) as i64, 100);
         let risk_tolerance = Num::new((0.02 * 100.0) as i64, 100);
         let risk_per_trade = total_equity * risk_tolerance;
-        let atr = MaxLeverage::get_atr(symbol, mktdata).await?;
-        let atr_stop = atr * Num::from(multiplier);
-        Ok(risk_per_trade / atr_stop)
+        let atr = RiskManagement::get_atr(symbol, mktdata).await?;
+        let atr_stop = atr.clone() * Num::from(multiplier);
+        let position_size = (risk_per_trade / atr_stop) * target_price.clone();
+        info!("Position size: {position_size} from equity: {total_equity} with atr: {atr} and price: {target_price}");
+        Ok(position_size)
     }
 
     fn convert_side(side: &Side) -> apca::api::v2::order::Side {

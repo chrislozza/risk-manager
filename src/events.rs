@@ -112,7 +112,7 @@ pub struct MktSignal {
     pub action: PortAction,
     pub direction: Direction,
     pub source: Source,
-    pub price: Option<f64>,
+    pub price: f64,
     pub primary_exchange: Option<String>,
     pub is_dirty: Option<bool>,
     pub amount: Option<f64>,
