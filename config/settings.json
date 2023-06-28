@@ -3,22 +3,25 @@
   "gcp_project_id": "gcp-project-id",
   "service_client": "gcp-service-client",
   "account_type": "paper",
-  "databases": [
-    {
+  "database": {
       "name": "manual-trader",
       "port": 5433,
       "host": "gcp-sql-host",
       "secret_id": "xxxx"
-    }
-  ],
+  },
   "strategies": {
-    "auto01": {
-      "name": "auto01",
-      "max_positions": 10
-    },
-    "manual01": {
-      "name": "manual01",
-      "max_positions": 10
+    "risk_tolerance": 0.02,
+    "configuration": {
+      "auto01": {
+        "max_positions": 10,
+        "locker_type": "pc",
+        "multiplier": "7"
+      },
+      "manual01": {
+        "max_positions": 10,
+        "locker_type": "atr",
+        "multiplier": "2"
+      }
     }
   }
 }

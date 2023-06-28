@@ -135,17 +135,14 @@ struct DBClient {
 
 impl DBClient {
     pub async fn new(settings: &Settings) -> Result<Self> {
-        if let Some(db_cfg) = &settings.database {
-            let password = &db_cfg.secret_id;
-            let database_url = format!(
-                "postgresql://postgres:{}@{}:{}/{}?sslmode=disable",
-                password, db_cfg.host, db_cfg.port, db_cfg.name
+        let db_cfg = &settings.database;
+        let password = &db_cfg.secret_id;
+        let database_url = format!(
+            "postgresql://postgres:{}@{}:{}/{}?sslmode=disable",
+            password, db_cfg.host, db_cfg.port, db_cfg.name
             );
-            Ok(DBClient {
-                connector: PostgresConnector::new(database_url.as_str()).await?,
-            })
-        } else {
-            panic!("No database settings found, exiting early")
-        }
+        Ok(DBClient {
+            connector: PostgresConnector::new(database_url.as_str()).await?,
+        })
     }
 }

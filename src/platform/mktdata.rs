@@ -86,20 +86,19 @@ impl MktData {
     }
 
     pub async fn get_historical_bars(&self, symbol: &str, days_to_lookback: i64) -> Vec<bars::Bar> {
-        match self.client.lock().await {
-            client => {
-                let today = Utc::now();
-                let start_date = today - Duration::days(days_to_lookback);
-                let end_date = today;
-                let request = bars::BarsReqInit {
-                    limit: Some(days_to_lookback as usize),
-                    ..Default::default()
-                }
-                .init(symbol, start_date, end_date, bars::TimeFrame::OneDay);
-
-                let res = client.issue::<bars::Get>(&request).await.unwrap();
-                res.bars
+        let client = self.client.lock().await;
+        {
+            let today = Utc::now();
+            let start_date = today - Duration::days(days_to_lookback);
+            let end_date = today;
+            let request = bars::BarsReqInit {
+                limit: Some(days_to_lookback as usize),
+                ..Default::default()
             }
+            .init(symbol, start_date, end_date, bars::TimeFrame::OneDay);
+
+            let res = client.issue::<bars::Get>(&request).await.unwrap();
+            res.bars
         }
     }
 

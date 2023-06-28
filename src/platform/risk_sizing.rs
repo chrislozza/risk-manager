@@ -24,7 +24,7 @@ impl MaxLeverage {
         cmp::min(max_port_weight, Num::from(2))
     }
 
-    pub async fn get_atr(symbol: &str, mktdata: &MktData) -> Result<f64> {
+    pub async fn get_atr(symbol: &str, mktdata: &MktData) -> Result<Num> {
         let mut indicator = AverageTrueRange::new(14).unwrap();
 
         let bars = mktdata.get_historical_bars(symbol, 60).await;
@@ -42,6 +42,6 @@ impl MaxLeverage {
                 info!("Next atr {atr}");
             }
         }
-        Ok(atr)
+        Ok(Num::new((atr * 100.00) as i64, 100))
     }
 }

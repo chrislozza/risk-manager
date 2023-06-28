@@ -9,11 +9,13 @@ use tokio::sync::broadcast;
 use tokio::sync::Mutex;
 use tokio::time;
 
-use futures::FutureExt as _;
-use futures::StreamExt as _;
-use futures::TryStreamExt as _;
+use futures::FutureExt;
+use futures::StreamExt;
+use futures::TryStreamExt;
 
 use super::Event;
+
+use anyhow::Result;
 
 pub struct StreamHandler {
     client: Arc<Mutex<Client>>,
@@ -43,6 +45,62 @@ impl StreamHandler {
         }
     }
 
+    //    async fn run_stream<Strm, Sub>(
+    //        mut stream: Strm,
+    //        subscription: Sub,
+    //        subscriber: broadcast::Sender<Event>,
+    //        )
+    //        -> Result<()>
+    //        where
+    //            Strm: StreamExt + TryStreamExt + FutureExt
+    //        {
+    //            tokio::spawn(async move {
+    //                info!("In task listening for order updates");
+    //                let mut retries = 3;
+    //                loop {
+    //                    match stream
+    //                        .take_until(time::sleep(time::Duration::from_secs(30)))
+    //                        .map_err(apca::Error::WebSocket)
+    //                        .try_for_each(|result| async {
+    //                            info!("Order Updates {result:?}");
+    //                            result
+    //                                .map(|data| {
+    //                                    let event = match data {
+    //                                        updates::OrderUpdate { event, order } => {
+    //                                            Event::OrderUpdate(updates::OrderUpdate { event, order })
+    //                                        }
+    //                                    };
+    //                                    if let Err(broadcast::error::SendError(val)) = subscriber.send(event) {
+    //                                        error!("Sending error {val:?}");
+    //                                    }
+    //                                })
+    //                            .map_err(apca::Error::Json)
+    //                        })
+    //                    .await
+    //                    {
+    //                        Err(apca::Error::WebSocket(err)) => {
+    //                            error!("Error thrown in websocket {err:?}");
+    //                            if stream.is_done() {
+    //                                error!("websocket is done, should restart?");
+    //                            }
+    //                            if retries == 0 {
+    //                                anyhow::bail!("Websocket retries used up, restarting app");
+    //                            }
+    //
+    //                            retries -= 1;
+    //                        }
+    //                        Err(err) => {
+    //                            error!("Error thrown in websocket {err:?}");
+    //                            retries -= 1;
+    //                        }
+    //                        _ => ()
+    //                    };
+    //                }
+    //                info!("Trading updates ended");
+    //            });
+    //            Ok(())
+    //        }
+
     pub async fn subscribe_to_order_updates(&self) -> Result<(), ()> {
         let (mut stream, _subscription) = self
             .client
@@ -67,14 +125,13 @@ impl StreamHandler {
                         info!("Order Updates {result:?}");
                         result
                             .map(|data| {
-                                let event = match data {
-                                    updates::OrderUpdate { event, order } => {
-                                        Event::OrderUpdate(updates::OrderUpdate { event, order })
-                                    }
-                                };
-                                match subscriber.send(event) {
-                                    Err(broadcast::error::SendError(data)) => error!("{data:?}"),
-                                    Ok(_) => (),
+                                let updates::OrderUpdate { event, order } = data;
+                                let event =
+                                    Event::OrderUpdate(updates::OrderUpdate { event, order });
+                                if let Err(broadcast::error::SendError(val)) =
+                                    subscriber.send(event)
+                                {
+                                    error!("Sending error {val:?}");
                                 }
                             })
                             .map_err(apca::Error::Json)
@@ -187,7 +244,7 @@ impl StreamHandler {
 
         let subscriber = self.subscriber.clone();
         tokio::spawn(async move {
-            match stream
+            if let Err(err) = stream
                 .by_ref()
                 .take_until(time::sleep(time::Duration::from_secs(30)))
                 .map_err(apca::Error::WebSocket)
@@ -201,19 +258,16 @@ impl StreamHandler {
                                     return;
                                 }
                             };
-                            match subscriber.send(event) {
-                                Err(broadcast::error::SendError(val)) => {
-                                    error!("Sending error {val:?}");
-                                }
-                                Ok(_) => (),
+
+                            if let Err(broadcast::error::SendError(val)) = subscriber.send(event) {
+                                error!("Sending error {val:?}");
                             }
                         })
                         .map_err(apca::Error::Json)
                 })
                 .await
             {
-                Err(err) => error!("Error thrown in websocket {}", err),
-                _ => (),
+                error!("Error thrown in websocket {}", err)
             };
         });
         Ok(subscription.subscriptions().trades.clone())

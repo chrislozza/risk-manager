@@ -46,18 +46,21 @@ async fn main() {
         std::process::exit(1);
     }
     let cmdline_args = Args::parse();
-    let settings = match Config::read_config_file(&cmdline_args.settings.as_str()) {
+    let settings = match Config::read_config_file(cmdline_args.settings.as_str()) {
         Err(val) => {
             error!("Settings file not found: {val}");
             std::process::exit(1);
-        },
+        }
         Ok(val) => val,
     };
     let is_live = match settings.account_type.as_str() {
         "live" => true,
         "paper" => false,
         val => {
-            error!("Couldn't determine cmdline type [{val:?}] account [{}]", settings.account_type);
+            error!(
+                "Couldn't determine cmdline type [{val:?}] account [{}]",
+                settings.account_type
+            );
             std::process::exit(1);
         }
     };

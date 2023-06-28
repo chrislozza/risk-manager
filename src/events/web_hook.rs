@@ -26,7 +26,7 @@ async fn post_event(
 
     let price = match str::parse::<f64>(&payload["price"]) {
         Ok(price) => price,
-        Err(err) => {
+        Err(_err) => {
             error!("Failed to parse value: price");
             return response::Json(json!({"response" : 400, "msg": "{err:?}"}));
         }

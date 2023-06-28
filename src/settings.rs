@@ -6,28 +6,37 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct StrategyCfg {
-    pub max_positions: i8,
+#[derive(Clone, Debug, Deserialize)]
+pub struct Settings {
+    pub gcp_subscription: String,
+    pub gcp_project_id: String,
+    pub service_client: String,
+    pub account_type: String,
+    pub database: DatabaseConfig,
+    pub strategies: StrategyConfigWrapper,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct DatabaseCfg {
-    pub host: String,
-    pub port: String,
+#[derive(Clone, Debug, Deserialize)]
+pub struct DatabaseConfig {
     pub name: String,
+    pub port: u16,
+    pub host: String,
     pub secret_id: String,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct Settings {
-    pub gcp_subscription: String,
-    pub service_client: String,
-    pub gcp_project_id: String,
-    pub account_type: String,
-    pub database: Option<DatabaseCfg>,
-    pub strategies: HashMap<String, StrategyCfg>,
+#[derive(Clone, Debug, Deserialize)]
+pub struct StrategyConfigWrapper {
+    pub risk_tolerance: f64,
+    pub configuration: HashMap<String, StrategyConfig>,
 }
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct StrategyConfig {
+    pub max_positions: i8,
+    pub locker_type: String,
+    pub multiplier: i8,
+}
+
 
 #[derive(Debug)]
 pub struct Config {}

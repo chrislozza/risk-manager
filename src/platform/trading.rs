@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::{thread, time::Duration};
 use tokio::sync::Mutex;
 
+use anyhow::{Result, Error};
 use tokio::sync::broadcast;
 
 use super::mktorder::{MktOrder, OrderAction};
@@ -51,12 +52,9 @@ impl Trading {
             Ok(val) => val,
             Err(err) => panic!("{err:?}"),
         };
-        match self.stream_handler.subscribe_to_order_updates().await {
-            Err(err) => {
-                error!("Failed to subscribe to stream, error: {err:?}");
-                panic!("{:?}", err);
-            }
-            _ => (),
+        if let Err(err) = self.stream_handler.subscribe_to_order_updates().await {
+            error!("Failed to subscribe to stream, error: {err:?}");
+            panic!("{:?}", err);
         };
         (positions, orders)
     }
@@ -67,11 +65,11 @@ impl Trading {
 
     pub async fn create_position(
         &mut self,
-        symbol: &String,
+        symbol: &str,
         target_price: Num,
         position_size: Num,
         side: order::Side,
-    ) -> Result<MktOrder, ()> {
+    ) -> Result<MktOrder, Error> {
         let limit_price = target_price.clone() * Num::new((1.07 * DENOM) as i32, DENOM as i32);
         let stop_price = target_price * Num::new((1.01 * DENOM) as i32, DENOM as i32);
         let amount = order::Amount::quantity(position_size.to_u64().unwrap());
@@ -107,14 +105,12 @@ impl Trading {
                 }
                 Err(apca::RequestError::Endpoint(order::PostError::NotPermitted(err))) => {
                     if retry == 0 {
-                        error!("Failed to post order");
-                        return Err(());
+                        Error::msg("Failed to post order");
                     }
                     warn!("Retry order posting retries left: {retry}, err: {err:?}");
                 }
-                Err(err) => {
-                    error!("Unknown error: {err:?}");
-                    return Err(());
+                Err(_err) => {
+                    Error::msg("Unknown error: {err:?}");
                 }
             }
             retry -= 1;

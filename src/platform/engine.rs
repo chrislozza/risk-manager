@@ -17,10 +17,13 @@ use super::Trading;
 use super::Event;
 use super::MktPosition;
 
+use anyhow::{Result};
+
 use crate::events::MktSignal;
 use crate::events::Side;
 use crate::platform::locker::{LockerStatus, TransactionType};
 use crate::Settings;
+use crate::platform::risk_sizing::MaxLeverage;
 
 use num_decimal::Num;
 
@@ -126,15 +129,12 @@ impl Engine {
 
     fn handle_new(&mut self, order_update: &updates::OrderUpdate) {
         let mktorder = &self.orders[&order_update.order.symbol];
-        match mktorder.get_action() {
-            OrderAction::Create => {
-                self.locker.monitor_trade(
-                    &order_update.order.symbol,
-                    order_update.order.limit_price.as_ref().unwrap(),
-                    TransactionType::Order,
-                );
-            }
-            _ => (),
+        if let OrderAction::Create = mktorder.get_action() {
+            self.locker.monitor_trade(
+                &order_update.order.symbol,
+                order_update.order.limit_price.as_ref().unwrap(),
+                TransactionType::Order,
+            );
         };
     }
 
@@ -175,25 +175,28 @@ impl Engine {
         }
     }
 
-    pub async fn create_position(&mut self, mkt_signal: &MktSignal) {
-        let strategy_cfg = match self.settings.strategies.get(&mkt_signal.strategy) {
+    pub async fn create_position(&mut self, mkt_signal: &MktSignal) -> Result<()> {
+        let strategy_cfg = match self.settings.strategies.configuration.get(&mkt_signal.strategy) {
             Some(strategy) => strategy,
             _ => {
                 info!("Not subscribed to strategy: {}", mkt_signal.strategy);
-                return
+                return Ok(());
             }
         };
         let target_price = Num::new((mkt_signal.price.unwrap() * 100.0) as i32, 100);
         let size = Self::size_position(
-            &self.account.buying_power(),
-            &target_price,
-            strategy_cfg.max_positions,
-        );
+            &mkt_signal.symbol,
+            &self.account.equity(),
+            strategy_cfg.multiplier,
+            &self.mktdata,
+        ).await?;
         let side = Self::convert_side(&mkt_signal.side);
-        let _ = self
+        let mktorder = self
             .trading
             .create_position(&mkt_signal.symbol, target_price, size, side)
-            .await;
+            .await?;
+        self.orders.insert(mkt_signal.symbol.clone(), mktorder);
+        Ok(())
     }
 
     pub async fn refresh_data(&mut self) {
@@ -214,9 +217,12 @@ impl Engine {
         gross_position_value
     }
 
-    fn size_position(buying_power: &Num, target_price: &Num, max_positions: i8) -> Num {
-        let strategy_buying_power = buying_power / Num::from(max_positions);
-        strategy_buying_power / target_price
+    async fn size_position(symbol: &str, total_equity: &Num, multiplier: i8, mktdata: &MktData) -> Result<Num> {
+        let risk_tolerance = Num::new((0.02 * 100.0) as i64, 100);
+        let risk_per_trade = total_equity * risk_tolerance;
+        let atr = MaxLeverage::get_atr(symbol, mktdata).await?;
+        let atr_stop = atr * Num::from(multiplier);
+        Ok(risk_per_trade / atr_stop)
     }
 
     fn convert_side(side: &Side) -> apca::api::v2::order::Side {

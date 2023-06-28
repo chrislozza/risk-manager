@@ -4,11 +4,9 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use url::Url;
 
-use tokio::{
-    sync,
-    time,
-};
-use chrono;
+use tokio::{sync, time};
+
+use anyhow::Result;
 
 mod account;
 mod engine;
@@ -70,7 +68,10 @@ impl Platform {
 
     async fn startup(
         &self,
-    ) -> Result<(sync::broadcast::Receiver<Event>, sync::broadcast::Receiver<Event>), ()> {
+    ) -> Result<(
+        sync::broadcast::Receiver<Event>,
+        sync::broadcast::Receiver<Event>,
+    )> {
         Ok(self.engine.lock().await.startup().await)
     }
 
@@ -78,7 +79,7 @@ impl Platform {
         self.engine.lock().await.shutdown().await;
     }
 
-    pub async fn run(&mut self) -> Result<(), ()> {
+    pub async fn run(&mut self) -> Result<()> {
         info!("Sending order");
         let (shutdown_sender, mut shutdown_reader) = sync::mpsc::unbounded_channel();
         let (mut trading_reader, mut mktdata_reader) = self.startup().await.unwrap();
@@ -110,7 +111,7 @@ impl Platform {
                 _ = time::sleep(time::Duration::from_millis(10)) => {
                     if last_refresh + chrono::Duration::minutes(3) < chrono::Utc::now() {
                         engine_clone.lock().await.refresh_data().await;
-                        last_refresh = chrono::Utc::now();                    
+                        last_refresh = chrono::Utc::now();
                     }
                 });
             }

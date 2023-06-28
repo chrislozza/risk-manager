@@ -24,6 +24,10 @@ impl AccountDetails {
         self.refresh_account_details().await
     }
 
+    pub fn equity(&self) -> Num {
+        self.account_details.clone().unwrap().equity
+    }
+
     pub fn buying_power(&self) -> Num {
         self.account_details.clone().unwrap().buying_power
     }
