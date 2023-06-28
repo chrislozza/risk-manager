@@ -20,11 +20,20 @@ impl fmt::Display for OrderAction {
 pub struct MktOrder {
     action: OrderAction,
     order: order::Order,
+    strategy: String,
 }
 
 impl MktOrder {
-    pub fn new(action: OrderAction, order: order::Order) -> Self {
-        MktOrder { action, order }
+    pub fn new(action: OrderAction, order: order::Order, strategy: Option<&str>) -> Self {
+        let strategy = if let Some(strategy) = strategy {
+            strategy.to_string()
+        }
+        else {
+            //db lookup
+            String::default()
+        };
+
+        MktOrder { action, order, strategy }
     }
 
     pub fn get_order(&self) -> &order::Order {
@@ -33,6 +42,10 @@ impl MktOrder {
 
     pub fn get_action(&self) -> &OrderAction {
         &self.action
+    }
+
+    pub fn get_strategy(&self) -> &str {
+        &self.strategy
     }
 
     pub fn market_value(&self) -> Num {

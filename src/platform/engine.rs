@@ -17,6 +17,7 @@ use super::Trading;
 use super::Event;
 use super::MktPosition;
 
+use crate::float_to_num;
 use anyhow::{Result};
 
 use crate::events::MktSignal;
@@ -62,11 +63,12 @@ impl Engine {
         self.account.startup().await;
         let (positions, orders) = self.trading.startup().await;
         self.mktdata.startup(&orders, &positions).await;
-        for mktorders in &orders {
-            let order = mktorders.1.get_order();
+        for mktorder in &orders {
+            let order = mktorder.1.get_order();
             self.locker.monitor_trade(
                 &order.symbol,
                 &order.limit_price.clone().unwrap(),
+                &self.settings.strategies.configuration[mktorder.1.get_strategy()],
                 TransactionType::Order,
             );
         }
@@ -75,6 +77,7 @@ impl Engine {
             self.locker.monitor_trade(
                 &position.symbol,
                 &position.average_entry_price,
+                &self.settings.strategies.configuration[mktposition.1.get_strategy()],
                 TransactionType::Position,
             );
         }
@@ -130,9 +133,11 @@ impl Engine {
     fn handle_new(&mut self, order_update: &updates::OrderUpdate) {
         let mktorder = &self.orders[&order_update.order.symbol];
         if let OrderAction::Create = mktorder.get_action() {
+            let strategy_cfg = &self.settings.strategies.configuration[mktorder.get_strategy()];
             self.locker.monitor_trade(
                 &order_update.order.symbol,
                 order_update.order.limit_price.as_ref().unwrap(),
+                &strategy_cfg,
                 TransactionType::Order,
             );
         };
@@ -142,9 +147,11 @@ impl Engine {
         let mktorder = &self.orders[&order_update.order.symbol];
         match mktorder.get_action() {
             OrderAction::Create => {
+                let strategy_cfg = &self.settings.strategies.configuration[mktorder.get_strategy()];
                 self.locker.monitor_trade(
                     &order_update.order.symbol,
                     &order_update.order.average_fill_price.clone().unwrap(),
+                    &strategy_cfg,
                     TransactionType::Position,
                 );
             }
@@ -187,14 +194,14 @@ impl Engine {
         let size = Self::size_position(
             &mkt_signal.symbol,
             &self.account.equity(),
-            strategy_cfg.multiplier,
+            strategy_cfg.trailing_size,
             mkt_signal.price,
             &self.mktdata,
         ).await?;
         let side = Self::convert_side(&mkt_signal.side);
         let mktorder = self
             .trading
-            .create_position(&mkt_signal.symbol, target_price, size, side)
+            .create_position(&mkt_signal.symbol, &mkt_signal.strategy, target_price, size, side)
             .await?;
         self.orders.insert(mkt_signal.symbol.clone(), mktorder);
         Ok(())
@@ -218,12 +225,12 @@ impl Engine {
         gross_position_value
     }
 
-    async fn size_position(symbol: &str, total_equity: &Num, multiplier: i8, target_price: f64, mktdata: &MktData) -> Result<Num> {
-        let target_price = Num::new((target_price * 100.0) as i64, 100);
-        let risk_tolerance = Num::new((0.02 * 100.0) as i64, 100);
+    async fn size_position(symbol: &str, total_equity: &Num, multiplier: f64, target_price: f64, mktdata: &MktData) -> Result<Num> {
+        let target_price = float_to_num!(target_price);
+        let risk_tolerance = float_to_num!(0.02);
         let risk_per_trade = total_equity * risk_tolerance;
         let atr = RiskManagement::get_atr(symbol, mktdata).await?;
-        let atr_stop = atr.clone() * Num::from(multiplier);
+        let atr_stop = atr.clone() * float_to_num!(multiplier);
         let position_size = (risk_per_trade / atr_stop) * target_price.clone();
         info!("Position size: {position_size} from equity: {total_equity} with atr: {atr} and price: {target_price}");
         Ok(position_size)

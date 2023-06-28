@@ -2,6 +2,10 @@ use apca::data::v2::stream;
 use log::info;
 use std::collections::HashMap;
 
+use crate::float_to_num;
+use crate::utils;
+use crate::settings::StrategyConfig;
+
 use num_decimal::Num;
 
 #[derive(PartialEq)]
@@ -23,11 +27,11 @@ pub struct Locker {
 
 struct TrailingStop {
     symbol: String,
-    entry_price: f64,
-    trail_pc: f64,
+    entry_price: Num,
+    trail_pc: Num,
     pivot_points: [(i8, f64, f64); 4],
-    high_low: f64,
-    stop_loss_level: f64,
+    high_low: Num,
+    stop_loss_level: Num,
     zone: i8,
     status: LockerStatus,
     t_type: TransactionType,
@@ -40,8 +44,10 @@ impl Locker {
         }
     }
 
-    pub fn monitor_trade(&mut self, symbol: &String, entry_price: &Num, t_type: TransactionType) {
-        let stop = TrailingStop::new(symbol.clone(), entry_price.to_f64().unwrap(), 7.0, t_type);
+    pub fn monitor_trade(&mut self, symbol: &String, entry_price: &Num, strategy_cfg: &StrategyConfig, t_type: TransactionType) {
+ 
+        let multiplier = float_to_num!(strategy_cfg.trailing_size);
+        let stop = TrailingStop::new(symbol.clone(), entry_price.clone(), multiplier, t_type);
         if self.stops.contains_key(symbol) {
             info!("Locker monitoring update symbol: {symbol} entry price: {entry_price} transaction: {t_type:?}");
             *self.stops.get_mut(symbol).unwrap() = stop;
@@ -81,10 +87,10 @@ impl Locker {
             info!("Symbol: {symbol:?} not being tracked in locker");
             return false;
         }
-        let trade_price = last_trade.trade_price.to_f64().unwrap();
+        let trade_price = &last_trade.trade_price;
         if let Some(stop) = &mut self.stops.get_mut(symbol) {
-            let stop_price = stop.price_update(trade_price);
-            if stop_price > trade_price {
+            let stop_price = stop.price_update(trade_price.clone());
+            if stop_price > trade_price.clone() {
                 stop.status = LockerStatus::Disabled;
                 return true;
             }
@@ -94,20 +100,22 @@ impl Locker {
 }
 
 impl TrailingStop {
-    fn new(symbol: String, entry_price: f64, trail_pc: f64, t_type: TransactionType) -> Self {
+    fn new(symbol: String, entry_price: Num, trail_pc: Num, t_type: TransactionType) -> Self {
+        let stop_trail = trail_pc.to_f64().unwrap();
         let pivot_points = [
-            (1, (trail_pc / 100.0), 1.0),
-            (2, (trail_pc * 2.0 / 100.0), 0.0),
-            (3, (trail_pc * 3.0 / 100.0), 2.0),
-            (4, (trail_pc * 4.0 / 100.0), 2.0 - (1.0 / trail_pc)),
+            (1, (stop_trail / 100.0), 1.0),
+            (2, (stop_trail * 2.0 / 100.0), 0.0),
+            (3, (stop_trail * 3.0 / 100.0), 2.0),
+            (4, (stop_trail * 4.0 / 100.0), 2.0 - (1.0 / stop_trail)),
         ];
-        let stop_loss_level = entry_price * (1.0 - pivot_points[0].1);
+        let stop_loss_level = entry_price.clone() * float_to_num!(1.0 - pivot_points[0].1);
+        let high_low = entry_price.clone();
         TrailingStop {
             symbol,
             entry_price,
             trail_pc,
             pivot_points,
-            high_low: entry_price,
+            high_low,
             stop_loss_level,
             zone: 0,
             status: LockerStatus::Active,
@@ -115,42 +123,50 @@ impl TrailingStop {
         }
     }
 
-    fn price_update(&mut self, current_price: f64) -> f64 {
-        let price_change = current_price - self.high_low;
+    fn price_update(&mut self, current_price: Num) -> Num {
+        let price = current_price.to_f64().unwrap();
+        let price_change =  price - self.high_low.to_f64().unwrap();
         if price_change <= 0.0 || self.status == LockerStatus::Disabled {
-            return self.stop_loss_level;
+            return self.stop_loss_level.clone();
         }
+        let entry_price = self.entry_price.to_f64().unwrap();
+        let mut stop_loss_level = self.stop_loss_level.to_f64().unwrap();
         for pivot in self.pivot_points.iter() {
             let (zone, percentage_change, new_trail_factor) = pivot;
             match zone {
                 4 => {
-                    if current_price > (self.entry_price * (1.0 + percentage_change)) {
+                    if price > (entry_price * (1.0 + percentage_change)) {
                         // final trail at 1%
-                        self.stop_loss_level = current_price - (self.entry_price * 0.01)
+                        stop_loss_level = price - (entry_price * 0.01)
                     } else {
                         // close distance X% -> 1%
-                        self.stop_loss_level += price_change * new_trail_factor
+                        stop_loss_level += price_change * new_trail_factor
                     }
                 }
                 _ => {
-                    if current_price > self.entry_price * (1.0 + percentage_change) {
+                    if price > entry_price * (1.0 + percentage_change) {
                         continue;
                     }
                     // set trail based on zone
-                    self.stop_loss_level += new_trail_factor * price_change;
+                    stop_loss_level += new_trail_factor * price_change;
                 }
             }
             if *zone > self.zone {
                 info!(
                     "Price update for symbol: {}, new stop level: {} in zone: {}",
-                    self.symbol, self.stop_loss_level, zone
+                    self.symbol, utils::round_to(self.stop_loss_level.clone(), 2), zone
                 );
                 self.zone = *zone;
             }
             break;
         }
-        self.high_low = current_price;
+        if self.stop_loss_level != float_to_num!(stop_loss_level) {
+            self.stop_loss_level = Num::new((stop_loss_level * 100.0) as i64, 100);
+        }
+        if current_price > self.high_low {
+            self.high_low = current_price;
+        }
         //write to db
-        self.stop_loss_level
+        self.stop_loss_level.clone()
     }
 }

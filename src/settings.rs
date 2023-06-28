@@ -34,9 +34,8 @@ pub struct StrategyConfigWrapper {
 pub struct StrategyConfig {
     pub max_positions: i8,
     pub locker_type: String,
-    pub multiplier: i8,
+    pub trailing_size: f64,
 }
-
 
 #[derive(Debug)]
 pub struct Config {}

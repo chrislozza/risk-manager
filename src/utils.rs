@@ -10,11 +10,12 @@ pub fn round_to(value: Num, decimal_places: u32) -> Num {
     (value * multiplier.clone()).round() / multiplier
 }
 
-//macro_rules! float_to_num {
-//    ($value: expr, $denom: ) => {
-//        Num::new($value, $denom)
-//    };
-//    ($value: expr) => {
-//        Num::new($value * 100, 100)
-//    };
-//}
+#[macro_export]
+macro_rules! float_to_num {
+    ($value: expr, $denom: expr) => {
+        Num::new($value, $denom)
+    };
+    ($value: expr) => {
+        Num::new(($value * 1000.0) as i64, 1000)
+    };
+}

@@ -15,12 +15,12 @@
       "auto01": {
         "max_positions": 10,
         "locker_type": "pc",
-        "multiplier": "7"
+        "trailing_size": 7.0
       },
       "manual01": {
         "max_positions": 10,
         "locker_type": "atr",
-        "multiplier": "2"
+        "trailing_size": 2.0
       }
     }
   }

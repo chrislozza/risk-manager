@@ -66,6 +66,7 @@ impl Trading {
     pub async fn create_position(
         &mut self,
         symbol: &str,
+        strategy: &str,
         target_price: Num,
         position_size: Num,
         side: order::Side,
@@ -100,7 +101,7 @@ impl Trading {
                 .await
             {
                 Ok(val) => {
-                    let mktorder = MktOrder::new(OrderAction::Create, val);
+                    let mktorder = MktOrder::new(OrderAction::Create, val, Some(strategy));
                     info!("Placed order: {}", mktorder);
                     return Ok(mktorder)
                 }
@@ -192,7 +193,7 @@ impl Trading {
                 Ok(val) => {
                     let mut orders = HashMap::default();
                     for v in val {
-                        let mktorder = MktOrder::new(OrderAction::Create, v);
+                        let mktorder = MktOrder::new(OrderAction::Create, v, None);
                         info!("Order download {}", mktorder.clone());
                         orders.insert(mktorder.get_order().symbol.clone(), mktorder);
                     }
@@ -219,7 +220,7 @@ impl Trading {
                 Ok(val) => {
                     let mut positions = HashMap::default();
                     for v in val {
-                        let mktposition = MktPosition::new(v);
+                        let mktposition = MktPosition::new(v, None);
                         info!("Position download {}", mktposition.clone());
                         positions.insert(mktposition.get_position().symbol.clone(), mktposition);
                     }
