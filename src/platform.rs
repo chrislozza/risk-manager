@@ -80,7 +80,6 @@ impl Platform {
     }
 
     pub async fn run(&mut self) -> Result<()> {
-        info!("Sending order");
         let (shutdown_sender, mut shutdown_reader) = sync::mpsc::unbounded_channel();
         let (mut trading_reader, mut mktdata_reader) = self.startup().await.unwrap();
         info!("Startup completed in the platform");
@@ -88,13 +87,11 @@ impl Platform {
         self.shutdown_signal = Some(shutdown_sender);
         let engine_clone = Arc::clone(&self.engine);
         tokio::spawn(async move {
-            info!("Taking a loop in the platform");
-            let mut last_refresh = chrono::Utc::now();
             loop {
                 tokio::select!(
                 event = trading_reader.recv() => {
                     if let Ok(Event::OrderUpdate(event)) = event {
-                        info!("Found a trade event: {event:?}");
+                        debug!("Found a trade event: {event:?}");
                         engine_clone.lock().await.order_update(&event).await;
                     };
                 }
@@ -107,12 +104,6 @@ impl Platform {
                 }
                 _event = shutdown_reader.recv() => {
                     break;
-                }
-                _ = time::sleep(time::Duration::from_millis(10)) => {
-                    if last_refresh + chrono::Duration::minutes(3) < chrono::Utc::now() {
-                        engine_clone.lock().await.refresh_data().await;
-                        last_refresh = chrono::Utc::now();
-                    }
                 });
             }
             info!("Shutting down event loop in platform");
@@ -120,7 +111,11 @@ impl Platform {
         Ok(())
     }
 
-    pub async fn create_position(&mut self, mkt_signal: &MktSignal) {
-        self.engine.lock().await.create_position(mkt_signal).await;
+    pub async fn create_position(&mut self, mkt_signal: &MktSignal) -> Result<()> {
+        self.engine.lock().await.create_position(mkt_signal).await
+    }
+
+    pub async fn print_status(&self) {
+        self.engine.lock().await.print_status().await
     }
 }

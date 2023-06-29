@@ -5,15 +5,14 @@ use std::fmt;
 #[derive(Debug, Clone)]
 pub struct MktPosition {
     position: position::Position,
-    strategy: String
+    strategy: String,
 }
 
 impl MktPosition {
     pub fn new(position: position::Position, strategy: Option<&str>) -> Self {
         let strategy = if let Some(strategy) = strategy {
             strategy.to_string()
-        }
-        else {
+        } else {
             //db lookup
             String::default()
         };
@@ -32,6 +31,14 @@ impl MktPosition {
 
 impl fmt::Display for MktPosition {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Position symbol[{}], strategy[{}] avgPrice[{}], size[{}], pnl[{}]", self.position.symbol, self.strategy, self.position.current_price.as_ref().unwrap(), self.position.current_price.as_ref().unwrap(), self.position.unrealized_gain_total.as_ref().unwrap())
+        write!(
+            f,
+            "Position symbol[{}], strategy[{}] avgPrice[{}], size[{}], pnl[{}]",
+            self.position.symbol,
+            self.strategy,
+            self.position.current_price.as_ref().unwrap(),
+            self.position.current_price.as_ref().unwrap(),
+            self.position.unrealized_gain_total.as_ref().unwrap()
+        )
     }
 }

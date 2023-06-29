@@ -7,7 +7,6 @@ use num_decimal::Num;
 
 use super::MktData;
 
-
 use anyhow::Result;
 
 pub struct RiskManagement {}

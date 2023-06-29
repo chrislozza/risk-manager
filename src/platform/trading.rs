@@ -7,7 +7,7 @@ use std::sync::Arc;
 use std::{thread, time::Duration};
 use tokio::sync::Mutex;
 
-use anyhow::{Result, Error};
+use anyhow::{bail, Result};
 use tokio::sync::broadcast;
 
 use super::mktorder::{MktOrder, OrderAction};
@@ -70,7 +70,7 @@ impl Trading {
         target_price: Num,
         position_size: Num,
         side: order::Side,
-    ) -> Result<MktOrder, Error> {
+    ) -> Result<MktOrder> {
         let limit_price = target_price.clone() * Num::new((1.07 * DENOM) as i32, DENOM as i32);
         let stop_price = target_price * Num::new((1.01 * DENOM) as i32, DENOM as i32);
         let _amount = order::Amount::quantity(position_size.to_u64().unwrap());
@@ -103,16 +103,16 @@ impl Trading {
                 Ok(val) => {
                     let mktorder = MktOrder::new(OrderAction::Create, val, Some(strategy));
                     info!("Placed order: {}", mktorder);
-                    return Ok(mktorder)
+                    return Ok(mktorder);
                 }
                 Err(apca::RequestError::Endpoint(order::PostError::NotPermitted(err))) => {
                     if retry == 0 {
-                        return Err(Error::msg("Failed to post order"))
+                        bail!("Failed to post order")
                     }
                     warn!("Retry order posting retries left: {retry}, err: {err:?}");
                 }
-                Err(_err) => {
-                    return Err(Error::msg("Unknown error: {err:?}"))
+                Err(err) => {
+                    bail!("Unknown error: {err:?}")
                 }
             }
             retry -= 1;
@@ -120,7 +120,7 @@ impl Trading {
         }
     }
 
-    pub async fn liquidate_position(&self, position: &MktPosition) -> bool {
+    pub async fn liquidate_position(&self, position: &MktPosition) -> Result<()> {
         let mut retry = 5;
         loop {
             info!("Before the liquidate position");
@@ -134,21 +134,21 @@ impl Trading {
                 .await;
             if let Ok(val) = result {
                 info!("Placed order {:?}", val);
-                return true;
+                break;
             } else if let Err(err) = result {
                 if retry == 0 {
                     error!("Failed to liquidate position");
-                    break;
+                    bail!("liquidate failed");
                 }
                 warn!("Retry liquidating position retries left: {retry}, err: {err:?}");
             }
             retry -= 1;
             thread::sleep(Duration::from_secs(1));
         }
-        false
+        Ok(())
     }
 
-    pub async fn cancel_order(&self, order: &MktOrder) -> bool {
+    pub async fn cancel_order(&self, order: &MktOrder) -> Result<()> {
         let mut retry = 5;
         loop {
             info!("Before the liquidate position");
@@ -161,12 +161,11 @@ impl Trading {
             {
                 Ok(val) => {
                     info!("Placed order {:?}", val);
-                    return true;
+                    break;
                 }
                 Err(err) => {
                     if retry == 0 {
-                        error!("Failed to post order, not permitted");
-                        break;
+                        bail!("Failed to post order, not permitted");
                     }
                     warn!("Retry order cancelling retries left: {retry}, err: {err:?}");
                 }
@@ -174,16 +173,15 @@ impl Trading {
             retry -= 1;
             thread::sleep(Duration::from_secs(1));
         }
-        false
+        Ok(())
     }
 
-    pub async fn get_orders(
-        &self,
-    ) -> Result<HashMap<String, MktOrder>, apca::RequestError<orders::GetError>> {
+    pub async fn get_orders(&self) -> Result<HashMap<String, MktOrder>> {
         let mut retry = 5;
+        let mut orders = HashMap::default();
         loop {
             let request = orders::OrdersReq::default();
-            match self
+            orders = match self
                 .client
                 .lock()
                 .await
@@ -194,21 +192,23 @@ impl Trading {
                     let mut orders = HashMap::default();
                     for v in val {
                         let mktorder = MktOrder::new(OrderAction::Create, v, None);
-                        info!("Order download {}", mktorder.clone());
+                        info!("Order download {mktorder}");
                         orders.insert(mktorder.get_order().symbol.clone(), mktorder);
                     }
-                    return Ok(orders);
+                    orders
                 }
                 Err(err) => {
                     retry -= 1;
                     if retry == 0 {
-                        error!("Failed to retrieve orders {}", err);
-                        return Err(err);
+                        bail!("Failed to retrieve orders, error: {err}");
                     }
+                    thread::sleep(Duration::from_secs(1));
+                    continue;
                 }
-            }
-            thread::sleep(Duration::from_secs(1));
+            };
+            break;
         }
+        Ok(orders)
     }
 
     pub async fn get_positions(
@@ -220,8 +220,8 @@ impl Trading {
                 Ok(val) => {
                     let mut positions = HashMap::default();
                     for v in val {
-                        let mktposition = MktPosition::new(v, None);
-                        info!("Position download {}", mktposition.clone());
+                        let mktposition = MktPosition::new(v, Some("00cl1"));
+                        info!("Position download {mktposition}");
                         positions.insert(mktposition.get_position().symbol.clone(), mktposition);
                     }
                     return Ok(positions);

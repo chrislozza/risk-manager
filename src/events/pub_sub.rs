@@ -7,6 +7,7 @@ use log::{info, warn};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+use anyhow::Result;
 use std::collections::HashMap;
 
 use super::Event;
@@ -30,9 +31,7 @@ impl GcpPubSub {
         }
     }
 
-    pub fn startup(&self) {}
-
-    pub async fn run(&self, send_mkt_signals: mpsc::UnboundedSender<Event>) -> Result<(), ()> {
+    pub async fn run(&self, send_mkt_signals: mpsc::UnboundedSender<Event>) -> Result<()> {
         info!("PubSub subscribing to {}", &self.subscription_name);
         let subscriber = self.client.subscription(&self.subscription_name);
         //subscribe
@@ -43,7 +42,9 @@ impl GcpPubSub {
                     move |message, _ctx| {
                         let sender = send_mkt_signals.clone();
                         async move {
-                            let _ = message.ack().await;
+                            if let Err(err) = message.ack().await {
+                                warn!("Failed to ack gcp message, error: {err}");
+                            }
                             let data = std::str::from_utf8(&message.message.data)
                                 .unwrap()
                                 .to_string();
@@ -64,7 +65,6 @@ impl GcpPubSub {
                 )
                 .await;
         });
-        info!("After task spawned pubsub");
         Ok(())
     }
 }

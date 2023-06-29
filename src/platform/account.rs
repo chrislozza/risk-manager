@@ -2,10 +2,12 @@ use apca::api::v2::account;
 use apca::Client;
 use log::{error, info};
 use num_decimal::Num;
+use std::fmt;
 use std::sync::Arc;
 use std::{thread, time::Duration};
-use std::fmt;
 use tokio::sync::Mutex;
+
+use anyhow::{bail, Result};
 
 #[derive(Debug)]
 pub struct AccountDetails {
@@ -16,9 +18,12 @@ pub struct AccountDetails {
 impl fmt::Display for AccountDetails {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if let Some(account) = &self.account_details {
-            write!(f, "Account id[{}], equity[{}], cash[{}], buying_power[{}]", *account.id, account.equity, account.cash, account.buying_power)
-        }
-        else {
+            write!(
+                f,
+                "Account id[{}], equity[{}], cash[{}], buying_power[{}]",
+                *account.id, account.equity, account.cash, account.buying_power
+            )
+        } else {
             write!(f, "No details available")
         }
     }
@@ -32,7 +37,7 @@ impl AccountDetails {
         }
     }
 
-    pub async fn startup(&mut self) {
+    pub async fn startup(&mut self) -> Result<()> {
         self.refresh_account_details().await
     }
 
@@ -44,15 +49,16 @@ impl AccountDetails {
         self.account_details.clone().unwrap().buying_power
     }
 
-    pub async fn refresh_account_details(&mut self) {
+    pub async fn refresh_account_details(&mut self) -> Result<()> {
         let account_details = match self.request_account_details().await {
             Ok(account) => account,
             Err(err) => {
-                panic!("{:?}", err)
+                bail!("{:?}", err);
             }
         };
         self.account_details = Some(account_details);
         info!("{self}");
+        Ok(())
     }
 
     async fn request_account_details(

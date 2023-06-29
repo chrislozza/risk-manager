@@ -1,7 +1,7 @@
 use apca::api::v2::order;
 
-use std::fmt;
 use num_decimal::Num;
+use std::fmt;
 
 #[derive(Debug, Clone)]
 pub enum OrderAction {
@@ -15,7 +15,6 @@ impl fmt::Display for OrderAction {
     }
 }
 
-
 #[derive(Debug, Clone)]
 pub struct MktOrder {
     action: OrderAction,
@@ -27,13 +26,16 @@ impl MktOrder {
     pub fn new(action: OrderAction, order: order::Order, strategy: Option<&str>) -> Self {
         let strategy = if let Some(strategy) = strategy {
             strategy.to_string()
-        }
-        else {
+        } else {
             //db lookup
             String::default()
         };
 
-        MktOrder { action, order, strategy }
+        MktOrder {
+            action,
+            order,
+            strategy,
+        }
     }
 
     pub fn get_order(&self) -> &order::Order {
@@ -61,8 +63,15 @@ impl fmt::Display for MktOrder {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let quantity = match self.order.amount.clone() {
             order::Amount::Quantity { quantity } => quantity,
-            _ => Num::from(0)
+            _ => Num::from(0),
         };
-        write!(f, "Order symbol[{}], limitPrice[{}], size[{}] status[{}]", self.order.symbol, self.order.limit_price.as_ref().unwrap(), quantity, self.action)
+        write!(
+            f,
+            "Order symbol[{}], limitPrice[{}], size[{}] status[{}]",
+            self.order.symbol,
+            self.order.limit_price.as_ref().unwrap(),
+            quantity,
+            self.action
+        )
     }
 }

@@ -18,13 +18,13 @@ use super::Event;
 use super::MktPosition;
 
 use crate::float_to_num;
-use anyhow::{Result};
+use anyhow::Result;
 
 use crate::events::MktSignal;
 use crate::events::Side;
 use crate::platform::locker::{LockerStatus, TransactionType};
-use crate::Settings;
 use crate::platform::risk_sizing::RiskManagement;
+use crate::Settings;
 
 use num_decimal::Num;
 
@@ -104,6 +104,111 @@ impl Engine {
         self.positions = positions.unwrap();
     }
 
+    pub async fn create_position(&mut self, mkt_signal: &MktSignal) -> Result<()> {
+        let strategy_cfg = match self
+            .settings
+            .strategies
+            .configuration
+            .get(&mkt_signal.strategy)
+        {
+            Some(strategy) => strategy,
+            _ => {
+                info!("Not subscribed to strategy: {}", mkt_signal.strategy);
+                return Ok(());
+            }
+        };
+        let target_price = Num::new((mkt_signal.price * 100.0) as i32, 100);
+        let size = Self::size_position(
+            &mkt_signal.symbol,
+            &self.account.equity(),
+            strategy_cfg.trailing_size,
+            mkt_signal.price,
+            &self.mktdata,
+        )
+        .await?;
+        let side = Self::convert_side(&mkt_signal.side);
+        let mktorder = self
+            .trading
+            .create_position(
+                &mkt_signal.symbol,
+                &mkt_signal.strategy,
+                target_price,
+                size,
+                side,
+            )
+            .await?;
+        self.orders.insert(mkt_signal.symbol.clone(), mktorder);
+        Ok(())
+    }
+
+    pub async fn print_status(&mut self) {
+        self.account.refresh_account_details().await;
+        if let Ok(positions) = self.trading.get_positions().await {
+            self.positions = positions;
+        }
+        if let Ok(orders) = self.trading.get_orders().await {
+            self.orders = orders;
+        }
+    }
+
+    fn get_gross_position_value(&self) -> Num {
+        let mut gross_position_value = Num::from(0);
+        for order in self.get_mktorders().values() {
+            gross_position_value += order.market_value();
+        }
+        gross_position_value
+    }
+
+    async fn size_position(
+        symbol: &str,
+        total_equity: &Num,
+        multiplier: f64,
+        target_price: f64,
+        mktdata: &MktData,
+    ) -> Result<Num> {
+        let target_price = float_to_num!(target_price);
+        let risk_tolerance = float_to_num!(0.02);
+        let risk_per_trade = total_equity * risk_tolerance;
+        let atr = RiskManagement::get_atr(symbol, mktdata).await?;
+        let atr_stop = atr.clone() * float_to_num!(multiplier);
+        let position_size = (risk_per_trade / atr_stop.clone()) * target_price.clone();
+        info!("Position size: {position_size} from equity: {total_equity} with atr: {atr}, atr_stop: {atr_stop} and price: {target_price}");
+        Ok(position_size)
+    }
+
+    fn convert_side(side: &Side) -> apca::api::v2::order::Side {
+        match side {
+            Side::Buy => apca::api::v2::order::Side::Buy,
+            Side::Sell => apca::api::v2::order::Side::Sell,
+        }
+    }
+
+    pub async fn mktdata_update(&mut self, mktdata_update: &stream::Trade) {
+        if !self.locker.should_close(mktdata_update)
+            || self.locker.get_status(&mktdata_update.symbol) != LockerStatus::Active
+        {
+            return;
+        }
+        match self.locker.get_transaction_type(&mktdata_update.symbol) {
+            TransactionType::Order => {
+                let order = &self.orders[&mktdata_update.symbol];
+                if let Err(val) = self.trading.cancel_order(order).await {
+                    error!("Dropping order cancel, failed to send to server, error: {val}");
+                    self.locker
+                        .update_status(&mktdata_update.symbol, LockerStatus::Active);
+                }
+            }
+            TransactionType::Position => {
+                let position = &self.positions[&mktdata_update.symbol];
+                if let Err(val) = self.trading.liquidate_position(position).await {
+                    error!("Dropping liquidate, failed to send to server, error: {val}");
+                    self.locker
+                        .update_status(&mktdata_update.symbol, LockerStatus::Active);
+                }
+            }
+        }
+    }
+
     pub async fn order_update(&mut self, order_update: &updates::OrderUpdate) {
         match order_update.event {
             updates::OrderStatus::New => {
@@ -157,89 +262,5 @@ impl Engine {
             }
             OrderAction::Liquidate => self.locker.complete(&order_update.order.symbol),
         };
-    }
-
-    pub async fn mktdata_update(&mut self, mktdata_update: &stream::Trade) {
-        if !self.locker.should_close(mktdata_update) {
-            return;
-        }
-        if *self.locker.get_status(&mktdata_update.symbol) != LockerStatus::Active {
-            return;
-        }
-        match self.locker.get_transaction_type(&mktdata_update.symbol) {
-            TransactionType::Order => {
-                let order = &self.orders[&mktdata_update.symbol];
-                if !(self.trading.cancel_order(order).await) {
-                    error!("Dropping order cancel, failed to send to server");
-                }
-            }
-            TransactionType::Position => {
-                let position = &self.positions[&mktdata_update.symbol];
-                if !(self.trading.liquidate_position(position).await) {
-                    error!("Dropping liquidate, failed to send to server");
-                }
-            }
-        }
-    }
-
-    pub async fn create_position(&mut self, mkt_signal: &MktSignal) -> Result<()> {
-        let strategy_cfg = match self.settings.strategies.configuration.get(&mkt_signal.strategy) {
-            Some(strategy) => strategy,
-            _ => {
-                info!("Not subscribed to strategy: {}", mkt_signal.strategy);
-                return Ok(());
-            }
-        };
-        let target_price = Num::new((mkt_signal.price * 100.0) as i32, 100);
-        let size = Self::size_position(
-            &mkt_signal.symbol,
-            &self.account.equity(),
-            strategy_cfg.trailing_size,
-            mkt_signal.price,
-            &self.mktdata,
-        ).await?;
-        let side = Self::convert_side(&mkt_signal.side);
-        let mktorder = self
-            .trading
-            .create_position(&mkt_signal.symbol, &mkt_signal.strategy, target_price, size, side)
-            .await?;
-        self.orders.insert(mkt_signal.symbol.clone(), mktorder);
-        Ok(())
-    }
-
-    pub async fn refresh_data(&mut self) {
-        self.account.refresh_account_details().await;
-        if let Ok(positions) = self.trading.get_positions().await {
-            self.positions = positions;
-        }
-        if let Ok(orders) = self.trading.get_orders().await {
-            self.orders = orders;
-        }
-    }
-
-    fn get_gross_position_value(&self) -> Num {
-        let mut gross_position_value = Num::from(0);
-        for order in self.get_mktorders().values() {
-            gross_position_value += order.market_value();
-        }
-        gross_position_value
-    }
-
-    async fn size_position(symbol: &str, total_equity: &Num, multiplier: f64, target_price: f64, mktdata: &MktData) -> Result<Num> {
-        let target_price = float_to_num!(target_price);
-        let risk_tolerance = float_to_num!(0.02);
-        let risk_per_trade = total_equity * risk_tolerance;
-        let atr = RiskManagement::get_atr(symbol, mktdata).await?;
-        let atr_stop = atr.clone() * float_to_num!(multiplier);
-        let position_size = (risk_per_trade / atr_stop) * target_price.clone();
-        info!("Position size: {position_size} from equity: {total_equity} with atr: {atr} and price: {target_price}");
-        Ok(position_size)
-    }
-
-    fn convert_side(side: &Side) -> apca::api::v2::order::Side {
-        match side {
-            Side::Buy => apca::api::v2::order::Side::Buy,
-            Side::Sell => apca::api::v2::order::Side::Sell,
-        }
     }
 }

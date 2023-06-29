@@ -3,12 +3,12 @@ use log::info;
 use std::collections::HashMap;
 
 use crate::float_to_num;
-use crate::utils;
 use crate::settings::StrategyConfig;
+use crate::utils;
 
 use num_decimal::Num;
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone, Copy)]
 pub enum LockerStatus {
     Active,
     Disabled,
@@ -44,8 +44,13 @@ impl Locker {
         }
     }
 
-    pub fn monitor_trade(&mut self, symbol: &String, entry_price: &Num, strategy_cfg: &StrategyConfig, t_type: TransactionType) {
- 
+    pub fn monitor_trade(
+        &mut self,
+        symbol: &String,
+        entry_price: &Num,
+        strategy_cfg: &StrategyConfig,
+        t_type: TransactionType,
+    ) {
         let multiplier = float_to_num!(strategy_cfg.trailing_size);
         let stop = TrailingStop::new(symbol.clone(), entry_price.clone(), multiplier, t_type);
         if self.stops.contains_key(symbol) {
@@ -77,8 +82,14 @@ impl Locker {
         &self.stops[symbol].t_type
     }
 
-    pub fn get_status(&mut self, symbol: &str) -> &LockerStatus {
-        &self.stops[symbol].status
+    pub fn get_status(&self, symbol: &str) -> LockerStatus {
+        self.stops[symbol].status
+    }
+
+    pub fn update_status(&mut self, symbol: &str, status: LockerStatus) {
+        if let Some(locker) = self.stops.get_mut(symbol) {
+            locker.status = status
+        }
     }
 
     pub fn should_close(&mut self, last_trade: &stream::Trade) -> bool {
@@ -125,7 +136,7 @@ impl TrailingStop {
 
     fn price_update(&mut self, current_price: Num) -> Num {
         let price = current_price.to_f64().unwrap();
-        let price_change =  price - self.high_low.to_f64().unwrap();
+        let price_change = price - self.high_low.to_f64().unwrap();
         if price_change <= 0.0 || self.status == LockerStatus::Disabled {
             return self.stop_loss_level.clone();
         }
@@ -154,7 +165,9 @@ impl TrailingStop {
             if *zone > self.zone {
                 info!(
                     "Price update for symbol: {}, new stop level: {} in zone: {}",
-                    self.symbol, utils::round_to(self.stop_loss_level.clone(), 2), zone
+                    self.symbol,
+                    utils::round_to(self.stop_loss_level.clone(), 2),
+                    zone
                 );
                 self.zone = *zone;
             }

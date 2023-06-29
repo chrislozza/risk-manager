@@ -1,5 +1,5 @@
 use clap::Parser;
-use log::{error, info};
+use log::{debug, error, info, warn};
 use tokio_util::sync::CancellationToken;
 
 mod db_client;
@@ -71,7 +71,7 @@ async fn main() {
     let key = env::var("KEY").expect("Failed to read the 'key' environment variable.");
     let secret = env::var("SECRET").expect("Failed to read the 'secret' environment variable.");
 
-    info!("Found key: {key}, secret: {secret}");
+    debug!("Found key: {key}, secret: {secret}");
 
     let mut platform = Platform::new(
         shutdown_signal.clone(),
@@ -91,19 +91,23 @@ async fn main() {
             event = receive_mkt_signals.recv() => {
                 if let Event::MktSignal(event) = event.unwrap() {
                     info!("Recieved an event {event:?}, creating new position");
-                    let _ = platform.create_position(&event).await;
+                    if let Err(err) = platform.create_position(&event).await {
+                        warn!("Signal dropped {event:?}, error: {err}");
+                    }
                 }
             }
             _ = shutdown_signal.cancelled() => {
+                warn!("exiting early");
+                std::process::exit(1)
+            }
+            _ = signal::ctrl_c() => {
+                info!("Keyboard shutdown detected");
                 let _ = publisher.shutdown().await;
                 let _ = platform.shutdown().await;
                 break
             }
-            _ = signal::ctrl_c() => {
-                info!("Keyboard shutdown detected");
-                shutdown_signal.cancel();
-            }
-            _ = sleep(Duration::from_millis(10)) => {
+            _ = sleep(Duration::from_secs(180)) => {
+                platform.print_status();
             }
         }
     }

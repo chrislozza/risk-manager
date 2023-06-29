@@ -140,7 +140,7 @@ impl DBClient {
         let database_url = format!(
             "postgresql://postgres:{}@{}:{}/{}?sslmode=disable",
             password, db_cfg.host, db_cfg.port, db_cfg.name
-            );
+        );
         Ok(DBClient {
             connector: PostgresConnector::new(database_url.as_str()).await?,
         })
