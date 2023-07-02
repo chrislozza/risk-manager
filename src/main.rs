@@ -1,6 +1,7 @@
 use clap::Parser;
 use log::{debug, error, info, warn};
-use tokio_util::sync::CancellationToken;
+
+use anyhow::{bail, Result};
 
 mod db_client;
 mod events;
@@ -13,22 +14,32 @@ mod utils;
 
 use events::Event;
 use events::EventPublisher;
-use logging::SimpleLogger;
+use logging::{CloudLogging, SimpleLogger};
 use platform::Platform;
 use settings::{Config, Settings};
 
 use tokio::signal;
 use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration};
+use tokio_util::sync::CancellationToken;
 
 use std::env;
 
 use log::{LevelFilter, SetLoggerError};
 
-static LOGGER: SimpleLogger = SimpleLogger;
+async fn log_init(shutdown_signal: CancellationToken, project_id: &str, logging_name: Option<&str>) -> Result<()> {
+    let gcp_logger = match logging_name {
+        Some(name) => Some(CloudLogging::new(name, project_id, shutdown_signal).await?),
+        _ => None,
+    };
 
-fn log_init() -> Result<(), SetLoggerError> {
-    log::set_logger(&LOGGER).map(|()| log::set_max_level(LevelFilter::Info))
+    if let Err(err) = log::set_boxed_logger(Box::new(SimpleLogger::new(gcp_logger)))
+        .map(|()| log::set_max_level(LevelFilter::Info))
+    {
+        bail!("Error caught in logging setup, error={err}")
+    }
+
+    Ok(())
 }
 
 /// Simple program to greet a person
@@ -41,18 +52,20 @@ struct Args {
 
 #[tokio::main]
 async fn main() {
-    if let Err(err) = log_init() {
-        println!("Failed to start logging, error: {err}");
-        std::process::exit(1);
-    }
     let cmdline_args = Args::parse();
     let settings = match Config::read_config_file(cmdline_args.settings.as_str()) {
         Err(val) => {
-            error!("Settings file error: {val}");
+            println!("Settings file error: {val}");
             std::process::exit(1);
         }
         Ok(val) => val,
     };
+
+    let shutdown_signal = CancellationToken::new();
+    if let Err(err) = log_init(shutdown_signal.clone(), &settings.gcp_project_id, settings.gcp_log_name.as_deref()).await {
+        println!("Failed to start logging, error: {err}");
+        std::process::exit(1);
+    }
     let is_live = match settings.account_type.as_str() {
         "live" => true,
         "paper" => false,
@@ -66,7 +79,6 @@ async fn main() {
     };
 
     let (send_mkt_signals, mut receive_mkt_signals) = mpsc::unbounded_channel();
-    let shutdown_signal = CancellationToken::new();
 
     let key = env::var("KEY").expect("Failed to read the 'key' environment variable.");
     let secret = env::var("SECRET").expect("Failed to read the 'secret' environment variable.");
@@ -107,7 +119,7 @@ async fn main() {
                 break
             }
             _ = sleep(Duration::from_secs(180)) => {
-                platform.print_status();
+                platform.print_status().await;
             }
         }
     }

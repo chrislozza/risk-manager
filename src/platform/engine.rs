@@ -60,7 +60,7 @@ impl Engine {
     }
 
     pub async fn startup(&mut self) -> (broadcast::Receiver<Event>, broadcast::Receiver<Event>) {
-        self.account.startup().await;
+        let _ = self.account.startup().await;
         let (positions, orders) = self.trading.startup().await;
         self.mktdata.startup(&orders, &positions).await;
         for mktorder in &orders {
@@ -142,7 +142,7 @@ impl Engine {
     }
 
     pub async fn print_status(&mut self) {
-        self.account.refresh_account_details().await;
+        let _ = self.account.refresh_account_details().await;
         if let Ok(positions) = self.trading.get_positions().await {
             self.positions = positions;
         }
@@ -171,7 +171,7 @@ impl Engine {
         let risk_per_trade = total_equity * risk_tolerance;
         let atr = RiskManagement::get_atr(symbol, mktdata).await?;
         let atr_stop = atr.clone() * float_to_num!(multiplier);
-        let position_size = (risk_per_trade / atr_stop.clone()) * target_price.clone();
+        let position_size = risk_per_trade / atr_stop.clone();
         info!("Position size: {position_size} from equity: {total_equity} with atr: {atr}, atr_stop: {atr_stop} and price: {target_price}");
         Ok(position_size)
     }

@@ -192,7 +192,7 @@ impl Trading {
                     let mut orders = HashMap::default();
                     for v in val {
                         let mktorder = MktOrder::new(OrderAction::Create, v, None);
-                        info!("Order download {mktorder}");
+                        info!("{mktorder}");
                         orders.insert(mktorder.get_order().symbol.clone(), mktorder);
                     }
                     orders
@@ -221,7 +221,7 @@ impl Trading {
                     let mut positions = HashMap::default();
                     for v in val {
                         let mktposition = MktPosition::new(v, Some("00cl1"));
-                        info!("Position download {mktposition}");
+                        info!("{mktposition}");
                         positions.insert(mktposition.get_position().symbol.clone(), mktposition);
                     }
                     return Ok(positions);

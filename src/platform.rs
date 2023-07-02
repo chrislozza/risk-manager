@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use url::Url;
 
-use tokio::{sync, time};
+use tokio::sync;
 
 use anyhow::Result;
 

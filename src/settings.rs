@@ -11,6 +11,7 @@ pub struct Settings {
     pub gcp_subscription: String,
     pub gcp_project_id: String,
     pub service_client: String,
+    pub gcp_log_name: Option<String>,
     pub account_type: String,
     pub database: DatabaseConfig,
     pub strategies: StrategyConfigWrapper,

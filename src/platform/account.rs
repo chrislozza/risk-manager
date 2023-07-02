@@ -73,7 +73,7 @@ impl AccountDetails {
                 Err(err) => {
                     retry -= 1;
                     if retry == 0 {
-                        error!("Failed to post order {}", err);
+                        error!("Get request failed, error: {err}");
                         return Err(err);
                     }
                 }

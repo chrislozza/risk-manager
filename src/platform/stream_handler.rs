@@ -9,9 +9,11 @@ use tokio::sync::broadcast;
 use tokio::sync::Mutex;
 use tokio::time;
 
-use futures::FutureExt;
-use futures::StreamExt;
-use futures::TryStreamExt;
+use futures::FutureExt as _;
+use futures::StreamExt as _;
+use futures::TryStreamExt as _;
+
+use tokio_util::sync::CancellationToken;
 
 use super::Event;
 
@@ -150,7 +152,7 @@ impl StreamHandler {
     pub async fn subscribe_to_mktdata(
         &mut self,
         symbols: stream::SymbolList,
-    ) -> Result<stream::Symbols, ()> {
+    ) -> Result<stream::Symbols> {
         let (mut stream, mut subscription) = self
             .client
             .lock()
@@ -222,7 +224,7 @@ impl StreamHandler {
     pub async fn unsubscribe_from_stream(
         &self,
         symbols: stream::SymbolList,
-    ) -> Result<stream::Symbols, ()> {
+    ) -> Result<stream::Symbols> {
         let (mut stream, mut subscription) = self
             .client
             .lock()
@@ -242,34 +244,6 @@ impl StreamHandler {
             .unwrap()
             .unwrap();
 
-        let subscriber = self.subscriber.clone();
-        tokio::spawn(async move {
-            if let Err(err) = stream
-                .by_ref()
-                .take_until(time::sleep(time::Duration::from_secs(30)))
-                .map_err(apca::Error::WebSocket)
-                .try_for_each(|result| async {
-                    result
-                        .map(|data| {
-                            let event = match data {
-                                stream::Data::Trade(data) => Event::Trade(data),
-                                data => {
-                                    error!("Got data type {data:?}");
-                                    return;
-                                }
-                            };
-
-                            if let Err(broadcast::error::SendError(val)) = subscriber.send(event) {
-                                error!("Sending error {val:?}");
-                            }
-                        })
-                        .map_err(apca::Error::Json)
-                })
-                .await
-            {
-                error!("Error thrown in websocket {}", err)
-            };
-        });
         Ok(subscription.subscriptions().trades.clone())
     }
 }
