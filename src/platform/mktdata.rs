@@ -1,10 +1,10 @@
 use apca::data::v2::{bars, stream};
 use apca::Client;
 use chrono::{Duration, Utc};
-use log::{error, info};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tracing::{error, info};
 
 use tokio::sync::broadcast;
 
@@ -12,6 +12,7 @@ use super::mktorder;
 use super::mktposition;
 use super::stream_handler::StreamHandler;
 use super::Event;
+use tokio_util::sync::CancellationToken;
 
 pub struct MktData {
     client: Arc<Mutex<Client>>,
@@ -23,9 +24,10 @@ pub struct MktData {
 }
 
 impl MktData {
-    pub fn new(client: Arc<Mutex<Client>>) -> Self {
+    pub fn new(client: Arc<Mutex<Client>>, shutdown_signal: CancellationToken) -> Self {
         let (sender, receiver) = broadcast::channel(100);
-        let stream_handler = StreamHandler::new(Arc::clone(&client), sender.clone());
+        let stream_handler =
+            StreamHandler::new(Arc::clone(&client), sender.clone(), shutdown_signal);
         MktData {
             client,
             symbols: stream::Symbols::default(),

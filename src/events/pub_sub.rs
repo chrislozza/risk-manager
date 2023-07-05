@@ -2,7 +2,7 @@ use google_cloud_default::WithAuthExt;
 
 use google_cloud_pubsub::client::{Client, ClientConfig};
 
-use log::{info, warn};
+use tracing::{info, warn};
 
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;

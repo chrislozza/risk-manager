@@ -47,7 +47,8 @@ impl MktOrder {
     }
 
     pub fn get_strategy(&self) -> &str {
-        &self.strategy
+        //&self.strategy
+        "00cl1"
     }
 
     pub fn market_value(&self) -> Num {
@@ -69,8 +70,8 @@ impl fmt::Display for MktOrder {
             f,
             "Order symbol[{}], limitPrice[{}], size[{}] status[{}]",
             self.order.symbol,
-            self.order.limit_price.as_ref().unwrap(),
-            quantity,
+            self.order.limit_price.as_ref().unwrap().round_with(3),
+            quantity.round(),
             self.action
         )
     }

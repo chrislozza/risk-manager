@@ -1,8 +1,8 @@
 use super::settings::Settings;
-use log::info;
 use std::collections::HashMap;
 use std::time::SystemTime;
 use tokio_postgres::{Client, Error, NoTls, Statement};
+use tracing::info;
 use uuid::Uuid;
 
 use anyhow::Result;
@@ -49,10 +49,10 @@ impl PostgresConnector {
 
     async fn prepare_update_statement(
         &self,
-        _table: &str,
+        table: &str,
         values: &HashMap<&str, &str>,
     ) -> Result<Statement, Error> {
-        let mut query = "UPDATE your_table SET ".to_string();
+        let mut query = format!("UPDATE {} SET ", table);
 
         let columns: Vec<String> = Vec::from_iter(values.keys().map(|s| String::from(*s)));
         let mut placeholders: String = (1..=columns.len())
@@ -100,14 +100,14 @@ impl PostgresConnector {
         _filters: &HashMap<String, String>,
         _local_id: Option<i32>,
     ) -> Option<Vec<(&str, &str)>> {
-        //        let mut stmt = self.client.prepare("SELECT * FROM $table WHERE id = $id").await?;
-        //        let rows = self.client.query(table, &[("id", &id)]).await?;
-        //        let row = rows.get(0);
-        //        if row.is_none() {
-        //            return None;
-        //        }
-        //        let data = row.unwrap();
-        //        Some(data.iter().map(|(k, v)| (k, v)).collect())
+        //                let mut stmt = self.client.prepare("SELECT * FROM $table WHERE id = $id").await?;
+        //                let rows = self.client.query(table, &[("id", &id)]).await?;
+        //                let row = rows.get(0);
+        //                if row.is_none() {
+        //                    return None;
+        //                }
+        //                let data = row.unwrap();
+        //                Some(data.iter().map(|(k, v)| (k, v)).collect())
         None
     }
 

@@ -1,10 +1,9 @@
 use apca::data::v2::stream;
-use log::info;
 use std::collections::HashMap;
+use tracing::info;
 
 use crate::float_to_num;
 use crate::settings::StrategyConfig;
-use crate::utils;
 
 use num_decimal::Num;
 
@@ -166,7 +165,7 @@ impl TrailingStop {
                 info!(
                     "Price update for symbol: {}, new stop level: {} in zone: {}",
                     self.symbol,
-                    utils::round_to(self.stop_loss_level.clone(), 2),
+                    self.stop_loss_level.clone().round_with(2),
                     zone
                 );
                 self.zone = *zone;

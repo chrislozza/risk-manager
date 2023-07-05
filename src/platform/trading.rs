@@ -1,11 +1,11 @@
 use apca::api::v2::{asset, order, orders, position, positions};
 use apca::Client;
-use log::{error, info, warn};
 use num_decimal::Num;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::{thread, time::Duration};
 use tokio::sync::Mutex;
+use tracing::{error, info, warn};
 
 use anyhow::{bail, Result};
 use tokio::sync::broadcast;
@@ -14,9 +14,8 @@ use super::mktorder::{MktOrder, OrderAction};
 use super::mktposition::MktPosition;
 use super::stream_handler::StreamHandler;
 use super::Event;
-use crate::utils::round_to;
-
-const DENOM: f32 = 100.00;
+use crate::float_to_num;
+use tokio_util::sync::CancellationToken;
 
 pub struct Trading {
     client: Arc<Mutex<Client>>,
@@ -27,9 +26,10 @@ pub struct Trading {
 }
 
 impl Trading {
-    pub fn new(client: Arc<Mutex<Client>>) -> Self {
+    pub fn new(client: Arc<Mutex<Client>>, shutdown_signal: CancellationToken) -> Self {
         let (sender, receiver) = broadcast::channel(2);
-        let stream_handler = StreamHandler::new(Arc::clone(&client), sender.clone());
+        let stream_handler =
+            StreamHandler::new(Arc::clone(&client), sender.clone(), shutdown_signal);
         Trading {
             client,
             is_alive: Arc::new(Mutex::new(false)),
@@ -71,9 +71,9 @@ impl Trading {
         position_size: Num,
         side: order::Side,
     ) -> Result<MktOrder> {
-        let limit_price = target_price.clone() * Num::new((1.07 * DENOM) as i32, DENOM as i32);
-        let stop_price = target_price * Num::new((1.01 * DENOM) as i32, DENOM as i32);
-        let _amount = order::Amount::quantity(position_size.to_u64().unwrap());
+        let limit_price = target_price.clone() * float_to_num!(1.07);
+        let stop_price = target_price * float_to_num!(1.01);
+        let amount = order::Amount::quantity(position_size.round());
         info!(
             "Placing order for fields limit_price: {}, stop_price: {}, amount: {:?}, side: {:?}",
             limit_price, stop_price, position_size, side
@@ -81,15 +81,11 @@ impl Trading {
 
         let request = order::OrderReqInit {
             type_: order::Type::StopLimit,
-            limit_price: Some(round_to(limit_price, 2)),
-            stop_price: Some(round_to(stop_price, 2)),
+            limit_price: Some(limit_price.round_with(2)),
+            stop_price: Some(stop_price.round_with(2)),
             ..Default::default()
         }
-        .init(
-            symbol,
-            side,
-            order::Amount::quantity(position_size.to_u64().unwrap()),
-        );
+        .init(symbol, side, amount);
         let mut retry = 5;
         loop {
             info!("Before posting the order");

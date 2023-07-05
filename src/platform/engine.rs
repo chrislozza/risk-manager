@@ -1,7 +1,7 @@
-use log::{error, info};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tracing::{error, info};
 
 use apca::api::v2::updates;
 use apca::data::v2::stream;
@@ -122,7 +122,7 @@ impl Engine {
             &mkt_signal.symbol,
             &self.account.equity(),
             strategy_cfg.trailing_size,
-            mkt_signal.price,
+            self.settings.strategies.configuration.len(),
             &self.mktdata,
         )
         .await?;
@@ -163,16 +163,16 @@ impl Engine {
         symbol: &str,
         total_equity: &Num,
         multiplier: f64,
-        target_price: f64,
+        number_of_strategies: usize,
         mktdata: &MktData,
     ) -> Result<Num> {
-        let target_price = float_to_num!(target_price);
         let risk_tolerance = float_to_num!(0.02);
+        let _total_equity_per_strategy = total_equity / number_of_strategies;
         let risk_per_trade = total_equity * risk_tolerance;
         let atr = RiskManagement::get_atr(symbol, mktdata).await?;
         let atr_stop = atr.clone() * float_to_num!(multiplier);
         let position_size = risk_per_trade / atr_stop.clone();
-        info!("Position size: {position_size} from equity: {total_equity} with atr: {atr}, atr_stop: {atr_stop} and price: {target_price}");
+        info!("Position size: {position_size} from equity: {total_equity} with atr: {atr}, atr_stop: {atr_stop}");
         Ok(position_size)
     }
 
@@ -242,7 +242,7 @@ impl Engine {
             self.locker.monitor_trade(
                 &order_update.order.symbol,
                 order_update.order.limit_price.as_ref().unwrap(),
-                &strategy_cfg,
+                strategy_cfg,
                 TransactionType::Order,
             );
         };
@@ -256,7 +256,7 @@ impl Engine {
                 self.locker.monitor_trade(
                     &order_update.order.symbol,
                     &order_update.order.average_fill_price.clone().unwrap(),
-                    &strategy_cfg,
+                    strategy_cfg,
                     TransactionType::Position,
                 );
             }

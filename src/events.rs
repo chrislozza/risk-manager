@@ -1,7 +1,7 @@
 use apca::api::v2::updates;
 use apca::data::v2::stream;
-use log::info;
 use serde::{Deserialize, Deserializer};
+use tracing::info;
 
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -167,7 +167,6 @@ impl EventPublisher {
 
         self.shutdown_signal = Some(shutdown_sender);
         tokio::spawn(async move {
-            info!("Taking a loop in the event publisher");
             loop {
                 tokio::select!(
                     _event = shutdown_reader.recv() => {

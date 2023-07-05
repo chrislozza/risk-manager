@@ -2,35 +2,33 @@ use apca::api::v2::updates;
 use apca::data::v2::stream;
 use apca::Client;
 
-use log::{error, info};
+use tracing::{error, info, warn};
 
+use anyhow::{bail, Result};
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use tokio::sync::Mutex;
-use tokio::time;
+
+use tokio_util::sync::CancellationToken;
 
 use futures::FutureExt as _;
 use futures::StreamExt as _;
 use futures::TryStreamExt as _;
 
-use tokio_util::sync::CancellationToken;
-
 use super::Event;
-
-use anyhow::Result;
 
 pub struct StreamHandler {
     client: Arc<Mutex<Client>>,
-    subscriber: broadcast::Sender<Event>,
-    is_alive: Arc<Mutex<bool>>,
+    event_publisher: broadcast::Sender<Event>,
+    shutdown_signal: CancellationToken,
 }
 
 impl Clone for StreamHandler {
     fn clone(&self) -> Self {
         StreamHandler {
             client: Arc::clone(&self.client),
-            subscriber: self.subscriber.clone(),
-            is_alive: Arc::clone(&self.is_alive),
+            event_publisher: self.event_publisher.clone(),
+            shutdown_signal: self.shutdown_signal.clone(),
         }
     }
     fn clone_from(&mut self, source: &Self) {
@@ -39,71 +37,19 @@ impl Clone for StreamHandler {
 }
 
 impl StreamHandler {
-    pub fn new(client: Arc<Mutex<Client>>, subscriber: broadcast::Sender<Event>) -> Self {
+    pub fn new(
+        client: Arc<Mutex<Client>>,
+        event_publisher: broadcast::Sender<Event>,
+        shutdown_signal: CancellationToken,
+    ) -> Self {
         StreamHandler {
             client,
-            subscriber,
-            is_alive: Arc::new(Mutex::new(true)),
+            event_publisher,
+            shutdown_signal,
         }
     }
 
-    //    async fn run_stream<Strm, Sub>(
-    //        mut stream: Strm,
-    //        subscription: Sub,
-    //        subscriber: broadcast::Sender<Event>,
-    //        )
-    //        -> Result<()>
-    //        where
-    //            Strm: StreamExt + TryStreamExt + FutureExt
-    //        {
-    //            tokio::spawn(async move {
-    //                info!("In task listening for order updates");
-    //                let mut retries = 3;
-    //                loop {
-    //                    match stream
-    //                        .take_until(time::sleep(time::Duration::from_secs(30)))
-    //                        .map_err(apca::Error::WebSocket)
-    //                        .try_for_each(|result| async {
-    //                            info!("Order Updates {result:?}");
-    //                            result
-    //                                .map(|data| {
-    //                                    let event = match data {
-    //                                        updates::OrderUpdate { event, order } => {
-    //                                            Event::OrderUpdate(updates::OrderUpdate { event, order })
-    //                                        }
-    //                                    };
-    //                                    if let Err(broadcast::error::SendError(val)) = subscriber.send(event) {
-    //                                        error!("Sending error {val:?}");
-    //                                    }
-    //                                })
-    //                            .map_err(apca::Error::Json)
-    //                        })
-    //                    .await
-    //                    {
-    //                        Err(apca::Error::WebSocket(err)) => {
-    //                            error!("Error thrown in websocket {err:?}");
-    //                            if stream.is_done() {
-    //                                error!("websocket is done, should restart?");
-    //                            }
-    //                            if retries == 0 {
-    //                                anyhow::bail!("Websocket retries used up, restarting app");
-    //                            }
-    //
-    //                            retries -= 1;
-    //                        }
-    //                        Err(err) => {
-    //                            error!("Error thrown in websocket {err:?}");
-    //                            retries -= 1;
-    //                        }
-    //                        _ => ()
-    //                    };
-    //                }
-    //                info!("Trading updates ended");
-    //            });
-    //            Ok(())
-    //        }
-
-    pub async fn subscribe_to_order_updates(&self) -> Result<(), ()> {
+    pub async fn subscribe_to_order_updates(&self) -> Result<()> {
         let (mut stream, _subscription) = self
             .client
             .lock()
@@ -112,16 +58,14 @@ impl StreamHandler {
             .await
             .unwrap();
 
-        info!("Before subscribe");
-
-        let subscriber = self.subscriber.clone();
-        let is_alive = Arc::clone(&self.is_alive);
+        let subscriber = self.event_publisher.clone();
+        let shutdown_signal = self.shutdown_signal.clone();
         tokio::spawn(async move {
             info!("In task listening for order updates");
-            while *is_alive.lock().await {
+            let mut retries = 5;
+            loop {
                 match stream
                     .by_ref()
-                    .take_until(time::sleep(time::Duration::from_secs(30)))
                     .map_err(apca::Error::WebSocket)
                     .try_for_each(|result| async {
                         info!("Order Updates {result:?}");
@@ -140,9 +84,25 @@ impl StreamHandler {
                     })
                     .await
                 {
-                    Err(err) => error!("Error thrown in websocket {}", err),
-                    _ => return,
+                    Err(apca::Error::WebSocket(err)) => {
+                        error!("Error thrown in websocket {err:?}");
+                    }
+                    Err(err) => {
+                        error!("Error thrown in websocket {err:?}");
+                    }
+                    _ => {
+                        retries = 5;
+                    }
                 };
+                retries -= 1;
+                if stream.is_done() {
+                    error!("websocket is done, should restart?");
+                }
+                warn!("Number of retries left in order updates {retries}");
+                if retries == 0 {
+                    shutdown_signal.cancel();
+                    break;
+                }
             }
             info!("Trading updates ended");
         });
@@ -165,25 +125,23 @@ impl StreamHandler {
         let subscribe = subscription.subscribe(&data).boxed_local().fuse();
         // Actually subscribe with the websocket server.
 
-        let error = stream::drive(subscribe, &mut stream)
+        if let Err(error) = stream::drive(subscribe, &mut stream)
             .await
             .unwrap()
-            .unwrap();
-
-        match error {
-            Err(apca::Error::Str(ref e)) if e == "failed to subscribe: invalid syntax (400)" => {}
-            Err(e) => panic!("received unexpected error: {e:?}"),
-            _ => info!("Subcribed to mktdata trades"),
+            .unwrap()
+        {
+            self.shutdown_signal.cancel();
+            bail!("Subscribe error in the stream drive: {error:?}");
         }
 
-        let subscriber = self.subscriber.clone();
-        let is_alive = Arc::clone(&self.is_alive);
+        let subscriber = self.event_publisher.clone();
+        let shutdown_signal = self.shutdown_signal.clone();
         tokio::spawn(async move {
             info!("In task listening for mktdata updates");
-            while *is_alive.lock().await {
+            let mut retries = 5;
+            loop {
                 match stream
                     .by_ref()
-                    .take_until(time::sleep(time::Duration::from_secs(30)))
                     .map_err(apca::Error::WebSocket)
                     .try_for_each(|result| async {
                         result
@@ -206,16 +164,24 @@ impl StreamHandler {
                 {
                     Err(apca::Error::WebSocket(err)) => {
                         error!("Error thrown in websocket {err:?}");
-                        if stream.is_done() {
-                            error!("websocket is done, should restart?");
-                        }
                     }
                     Err(err) => {
                         error!("Error thrown in websocket {err:?}");
                         return;
                     }
-                    _ => (),
+                    _ => {
+                        retries = 5;
+                    }
                 };
+                retries -= 1;
+                if stream.is_done() {
+                    error!("websocket is done, should restart?");
+                }
+                warn!("Number of retries left in mktdata updates {retries}");
+                if retries == 0 {
+                    shutdown_signal.cancel();
+                    break;
+                }
             }
         });
         Ok(subscription.subscriptions().trades.clone())
@@ -238,11 +204,14 @@ impl StreamHandler {
         data.set_trades(symbols);
 
         let unsubscribe = subscription.unsubscribe(&data).boxed_local().fuse();
-        let () = stream::drive(unsubscribe, &mut stream)
+        if let Err(error) = stream::drive(unsubscribe, &mut stream)
             .await
             .unwrap()
             .unwrap()
-            .unwrap();
+        {
+            self.shutdown_signal.cancel();
+            bail!("Unsubscribe error in the stream drive: {error:?}");
+        }
 
         Ok(subscription.subscriptions().trades.clone())
     }

@@ -1,7 +1,5 @@
 use clap::Parser;
-use log::{debug, error, info, warn};
-
-use anyhow::{bail, Result};
+use tracing::{debug, error, info, warn};
 
 mod db_client;
 mod events;
@@ -14,7 +12,7 @@ mod utils;
 
 use events::Event;
 use events::EventPublisher;
-use logging::{CloudLogging, SimpleLogger};
+use logging::CloudLogging;
 use platform::Platform;
 use settings::{Config, Settings};
 
@@ -25,23 +23,21 @@ use tokio_util::sync::CancellationToken;
 
 use std::env;
 
-use log::{LevelFilter, SetLoggerError};
-
-async fn log_init(shutdown_signal: CancellationToken, project_id: &str, logging_name: Option<&str>) -> Result<()> {
-    let gcp_logger = match logging_name {
-        Some(name) => Some(CloudLogging::new(name, project_id, shutdown_signal).await?),
-        _ => None,
-    };
-
-    if let Err(err) = log::set_boxed_logger(Box::new(SimpleLogger::new(gcp_logger)))
-        .map(|()| log::set_max_level(LevelFilter::Info))
-    {
-        bail!("Error caught in logging setup, error={err}")
-    }
-
-    Ok(())
-}
-
+//async fn log_init(shutdown_signal: CancellationToken, project_id: &str, logging_name: Option<&str>) -> Result<()> {
+//    let gcp_logger = match logging_name {
+//        Some(name) => Some(CloudLogging::new(name, project_id, shutdown_signal).await?),
+//        _ => None,
+//    };
+//
+//    if let Err(err) = log::set_boxed_logger(Box::new(SimpleLogger::new(gcp_logger)))
+//        .map(|()| log::set_max_level(LevelFilter::Info))
+//    {
+//        bail!("Error caught in logging setup, error={err}")
+//    }
+//
+//    Ok(())
+//}
+//
 /// Simple program to greet a person
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -62,10 +58,13 @@ async fn main() {
     };
 
     let shutdown_signal = CancellationToken::new();
-    if let Err(err) = log_init(shutdown_signal.clone(), &settings.gcp_project_id, settings.gcp_log_name.as_deref()).await {
-        println!("Failed to start logging, error: {err}");
-        std::process::exit(1);
-    }
+    let _logger = CloudLogging::new(
+        settings.gcp_log_name.clone(),
+        settings.gcp_project_id.clone(),
+        shutdown_signal.clone(),
+    )
+    .await
+    .unwrap();
     let is_live = match settings.account_type.as_str() {
         "live" => true,
         "paper" => false,
@@ -97,7 +96,6 @@ async fn main() {
 
     let _ = platform.run().await;
     let _ = publisher.run(&send_mkt_signals).await;
-    info!("Taking a loop in the app");
     loop {
         tokio::select! {
             event = receive_mkt_signals.recv() => {

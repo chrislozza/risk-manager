@@ -5,7 +5,7 @@ use tokio_util::sync::CancellationToken;
 use axum::{response, routing, Router};
 use tower_http::cors::CorsLayer;
 
-use log::{error, info};
+use tracing::{error, info};
 
 use serde_json::{json, Value};
 

@@ -1,7 +1,7 @@
 use apca::{ApiInfo, Client};
-use log::{debug, info};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tracing::{debug, info};
 use url::Url;
 
 use tokio::sync;
@@ -38,7 +38,7 @@ pub struct Platform {
 
 impl Platform {
     pub fn new(
-        _shutdown_signal: CancellationToken,
+        shutdown_signal: CancellationToken,
         settings: Settings,
         key: &str,
         secret: &str,
@@ -53,8 +53,8 @@ impl Platform {
 
         let client = Arc::new(Mutex::new(Client::new(api_info)));
         let account = AccountDetails::new(Arc::clone(&client));
-        let trading = Trading::new(Arc::clone(&client));
-        let mktdata = MktData::new(Arc::clone(&client));
+        let trading = Trading::new(Arc::clone(&client), shutdown_signal.clone());
+        let mktdata = MktData::new(Arc::clone(&client), shutdown_signal);
         let locker = Locker::new();
 
         let engine = Engine::new(settings, account, mktdata, trading, locker);

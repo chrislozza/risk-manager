@@ -25,7 +25,8 @@ impl MktPosition {
     }
 
     pub fn get_strategy(&self) -> &str {
-        &self.strategy
+        //&self.strategy
+        "00cl1"
     }
 }
 

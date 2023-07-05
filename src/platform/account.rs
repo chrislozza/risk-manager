@@ -1,11 +1,11 @@
 use apca::api::v2::account;
 use apca::Client;
-use log::{error, info};
 use num_decimal::Num;
 use std::fmt;
 use std::sync::Arc;
 use std::{thread, time::Duration};
 use tokio::sync::Mutex;
+use tracing::{error, info};
 
 use anyhow::{bail, Result};
 
