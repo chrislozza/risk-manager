@@ -1,11 +1,11 @@
-use apca::data::v2::stream;
 use std::collections::HashMap;
 use tracing::info;
 
-use crate::float_to_num;
-use crate::settings::StrategyConfig;
+use crate::to_num;
 
 use num_decimal::Num;
+
+use super::Settings;
 
 #[derive(PartialEq, Clone, Copy)]
 pub enum LockerStatus {
@@ -22,24 +22,14 @@ pub enum TransactionType {
 
 pub struct Locker {
     stops: HashMap<String, TrailingStop>,
-}
-
-struct TrailingStop {
-    symbol: String,
-    entry_price: Num,
-    trail_pc: Num,
-    pivot_points: [(i8, f64, f64); 4],
-    high_low: Num,
-    stop_loss_level: Num,
-    zone: i8,
-    status: LockerStatus,
-    t_type: TransactionType,
+    settings: Settings,
 }
 
 impl Locker {
-    pub fn new() -> Self {
+    pub fn new(settings: Settings) -> Self {
         Locker {
             stops: HashMap::new(),
+            settings,
         }
     }
 
@@ -47,10 +37,11 @@ impl Locker {
         &mut self,
         symbol: &String,
         entry_price: &Num,
-        strategy_cfg: &StrategyConfig,
+        strategy: &str,
         t_type: TransactionType,
     ) {
-        let multiplier = float_to_num!(strategy_cfg.trailing_size);
+        let strategy_cfg = &self.settings.strategies.configuration[strategy];
+        let multiplier = to_num!(strategy_cfg.trailing_size);
         let stop = TrailingStop::new(symbol.clone(), entry_price.clone(), multiplier, t_type);
         if self.stops.contains_key(symbol) {
             info!("Locker monitoring update symbol: {symbol} entry price: {entry_price} transaction: {t_type:?}");
@@ -91,22 +82,32 @@ impl Locker {
         }
     }
 
-    pub fn should_close(&mut self, last_trade: &stream::Trade) -> bool {
-        let symbol = last_trade.symbol.as_str();
+    pub fn should_close(&mut self, symbol: &str, trade_price: &Num) -> bool {
         if !self.stops.contains_key(symbol) {
             info!("Symbol: {symbol:?} not being tracked in locker");
             return false;
         }
-        let trade_price = &last_trade.trade_price;
         if let Some(stop) = &mut self.stops.get_mut(symbol) {
             let stop_price = stop.price_update(trade_price.clone());
-            if stop_price > trade_price.clone() {
+            if stop_price > *trade_price {
                 stop.status = LockerStatus::Disabled;
                 return true;
             }
         }
         false
     }
+}
+
+struct TrailingStop {
+    symbol: String,
+    entry_price: Num,
+    trail_pc: Num,
+    pivot_points: [(i8, f64, f64); 4],
+    high_low: Num,
+    stop_loss_level: Num,
+    zone: i8,
+    status: LockerStatus,
+    t_type: TransactionType,
 }
 
 impl TrailingStop {
@@ -118,7 +119,7 @@ impl TrailingStop {
             (3, (stop_trail * 3.0 / 100.0), 2.0),
             (4, (stop_trail * 4.0 / 100.0), 2.0 - (1.0 / stop_trail)),
         ];
-        let stop_loss_level = entry_price.clone() * float_to_num!(1.0 - pivot_points[0].1);
+        let stop_loss_level = entry_price.clone() * to_num!(1.0 - pivot_points[0].1);
         let high_low = entry_price.clone();
         TrailingStop {
             symbol,
@@ -172,7 +173,7 @@ impl TrailingStop {
             }
             break;
         }
-        if self.stop_loss_level != float_to_num!(stop_loss_level) {
+        if self.stop_loss_level != to_num!(stop_loss_level) {
             self.stop_loss_level = Num::new((stop_loss_level * 100.0) as i64, 100);
         }
         if current_price > self.high_low {

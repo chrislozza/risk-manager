@@ -2,12 +2,13 @@ use apca::api::v2::updates;
 use apca::data::v2::stream;
 use apca::Client;
 
-use tracing::{error, info, warn};
+use tracing::error;
+use tracing::info;
+use tracing::warn;
 
 use anyhow::{bail, Result};
-use std::sync::Arc;
+
 use tokio::sync::broadcast;
-use tokio::sync::Mutex;
 
 use tokio_util::sync::CancellationToken;
 
@@ -17,46 +18,26 @@ use futures::TryStreamExt as _;
 
 use super::Event;
 
-pub struct WebSocket {
-    client: Arc<Mutex<Client>>,
+#[derive(Debug)]
+pub(crate) struct WebSocket {
     event_publisher: broadcast::Sender<Event>,
     shutdown_signal: CancellationToken,
 }
 
-impl Clone for WebSocket {
-    fn clone(&self) -> Self {
-        WebSocket {
-            client: Arc::clone(&self.client),
-            event_publisher: self.event_publisher.clone(),
-            shutdown_signal: self.shutdown_signal.clone(),
-        }
-    }
-    fn clone_from(&mut self, source: &Self) {
-        *self = source.clone()
-    }
-}
-
 impl WebSocket {
     pub fn new(
-        client: Arc<Mutex<Client>>,
         event_publisher: broadcast::Sender<Event>,
         shutdown_signal: CancellationToken,
     ) -> Self {
         WebSocket {
-            client,
             event_publisher,
             shutdown_signal,
         }
     }
 
-    pub async fn subscribe_to_order_updates(&self) -> Result<()> {
-        let (mut stream, _subscription) = self
-            .client
-            .lock()
-            .await
-            .subscribe::<updates::OrderUpdates>()
-            .await
-            .unwrap();
+    pub async fn subscribe_to_order_updates(&self, client: &Client) -> Result<()> {
+        let (mut stream, _subscription) =
+            client.subscribe::<updates::OrderUpdates>().await.unwrap();
 
         let subscriber = self.event_publisher.clone();
         let shutdown_signal = self.shutdown_signal.clone();
@@ -110,16 +91,13 @@ impl WebSocket {
     }
 
     pub async fn subscribe_to_mktdata(
-        &mut self,
+        &self,
+        client: &Client,
         symbols: stream::SymbolList,
     ) -> Result<stream::Symbols> {
-        let (mut stream, mut subscription) = self
-            .client
-            .lock()
-            .await
+        let (mut stream, mut subscription) = client
             .subscribe::<stream::RealtimeData<stream::IEX>>()
-            .await
-            .unwrap();
+            .await?;
         let mut data = stream::MarketData::default();
         data.set_trades(symbols);
         let subscribe = subscription.subscribe(&data).boxed_local().fuse();
@@ -175,7 +153,9 @@ impl WebSocket {
                 };
                 retries -= 1;
                 if stream.is_done() {
-                    error!("websocket is done, should restart?");
+                    error!("websocket is done, should restart");
+                    shutdown_signal.cancel();
+                    break;
                 }
                 warn!("Number of retries left in mktdata updates {retries}");
                 if retries == 0 {
@@ -187,20 +167,16 @@ impl WebSocket {
         Ok(subscription.subscriptions().trades.clone())
     }
 
-    pub async fn unsubscribe_from_stream(
+    pub async fn unsubscribe_from_mktdata(
         &self,
+        client: &Client,
         symbols: stream::SymbolList,
     ) -> Result<stream::Symbols> {
-        let (mut stream, mut subscription) = self
-            .client
-            .lock()
-            .await
+        let (mut stream, mut subscription) = client
             .subscribe::<stream::RealtimeData<stream::IEX>>()
-            .await
-            .unwrap();
+            .await?;
 
         let mut data = stream::MarketData::default();
-        data.set_bars(symbols.clone());
         data.set_trades(symbols);
 
         let unsubscribe = subscription.unsubscribe(&data).boxed_local().fuse();

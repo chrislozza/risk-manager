@@ -1,158 +1,97 @@
-use apca::data::v2::{bars, stream};
-use apca::Client;
-use chrono::{Duration, Utc};
+use apca::data::v2::bars;
+use apca::data::v2::stream;
+
+use chrono::Duration;
+use chrono::Utc;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tokio::sync::Mutex;
-use tracing::{error, info};
 
-use tokio::sync::broadcast;
+use tracing::info;
 
-use super::mktorder;
-use super::mktposition;
-use super::stream_handler::StreamHandler;
-use super::Event;
-use tokio_util::sync::CancellationToken;
+use anyhow::Result;
+
+use num_decimal::Num;
+use std::vec::Vec;
+
+use super::web_clients::Connectors;
+use crate::to_num;
 
 pub struct MktData {
-    client: Arc<Mutex<Client>>,
-    symbols: stream::Symbols,
-    is_alive: Arc<Mutex<bool>>,
-    stream_handler: StreamHandler,
-    receiver: broadcast::Receiver<Event>,
-    sender: broadcast::Sender<Event>,
+    connectors: Arc<Connectors>,
+    snapshots: HashMap<String, Num>,
 }
 
 impl MktData {
-    pub fn new(client: Arc<Mutex<Client>>, shutdown_signal: CancellationToken) -> Self {
-        let (sender, receiver) = broadcast::channel(100);
-        let stream_handler =
-            StreamHandler::new(Arc::clone(&client), sender.clone(), shutdown_signal);
+    pub fn new(connectors: &Arc<Connectors>) -> Self {
         MktData {
-            client,
-            symbols: stream::Symbols::default(),
-            is_alive: Arc::new(Mutex::new(false)),
-            stream_handler,
-            receiver,
-            sender,
+            connectors: Arc::clone(connectors),
+            snapshots: HashMap::default(),
         }
     }
 
-    fn build_symbol_list(
+    pub async fn get_historical_bars(
         &self,
-        orders: &HashMap<String, mktorder::MktOrder>,
-        positions: &HashMap<String, mktposition::MktPosition>,
-    ) -> Vec<String> {
-        let mut symbols = Vec::<String>::default();
-        for mktorder in orders.values() {
-            symbols.push(mktorder.get_order().symbol.clone());
+        symbol: &str,
+        days_to_lookback: i64,
+    ) -> Result<Vec<bars::Bar>> {
+        let today = Utc::now();
+        let start_date = today - Duration::days(days_to_lookback);
+        let end_date = today - Duration::days(1);
+        let request = bars::BarsReqInit {
+            limit: Some(days_to_lookback as usize),
+            ..Default::default()
         }
+        .init(symbol, start_date, end_date, bars::TimeFrame::OneDay);
 
-        for mktposition in positions.values() {
-            symbols.push(mktposition.get_position().symbol.clone());
+        let result = self.connectors.get_historical_bars(&request).await?;
+        Ok(result.bars)
+    }
+
+    pub async fn startup(&mut self, positions: Vec<String>, orders: Vec<String>) -> Result<()> {
+        let position_sym = self.batch_subscribe(positions).await?;
+        let order_sym = self.batch_subscribe(orders).await?;
+
+        let symbol_list = vec![position_sym, order_sym];
+        for symbols in symbol_list.iter() {
+            if let stream::Symbols::List(list) = symbols {
+                for symbol in list.to_vec() {
+                    self.snapshots
+                        .entry(symbol.to_string())
+                        .or_insert_with(|| to_num!(0.0));
+                }
+            }
         }
-        symbols
+        Ok(())
     }
 
-    pub fn stream_reader(&self) -> broadcast::Receiver<Event> {
-        self.sender.subscribe()
+    async fn batch_subscribe(&self, symbols: Vec<String>) -> Result<stream::Symbols> {
+        info!("Batch subscribing to symbols {symbols:?}");
+        self.connectors.subscribe_to_symbols(symbols.into()).await
     }
 
-    pub async fn startup(
-        &mut self,
-        orders: &HashMap<String, mktorder::MktOrder>,
-        positions: &HashMap<String, mktposition::MktPosition>,
-    ) {
-        let symbols = self.build_symbol_list(orders, positions);
-        if symbols.is_empty() {
-            info!("No symbols to subscribe to");
-            return;
-        }
-
-        let symbols = match self
-            .stream_handler
-            .subscribe_to_mktdata(symbols.into())
-            .await
-        {
-            Err(err) => {
-                error!("Failed to subscribe to stream, error: {err:?}");
-                panic!("{:?}", err);
-            }
-            Ok(val) => val,
-        };
-        self.symbols = symbols;
+    pub async fn subscribe(&mut self, symbol: &str) -> Result<()> {
+        let symbols = vec![symbol.to_string()];
+        let _ = self.batch_subscribe(symbols).await?;
+        self.snapshots.insert(symbol.to_string(), to_num!(0.0));
+        Ok(())
     }
 
-    pub async fn shutdown(&self) {
-        info!("Shutdown initiated");
+    pub async fn unsubscribe(&mut self, symbol: &str) -> Result<()> {
+        let _ = self
+            .connectors
+            .unsubscribe_from_symbols(vec![symbol.to_string()].into())
+            .await?;
+        self.snapshots.remove(symbol);
+        Ok(())
     }
 
-    pub async fn get_historical_bars(&self, symbol: &str, days_to_lookback: i64) -> Vec<bars::Bar> {
-        let client = self.client.lock().await;
-        {
-            let today = Utc::now();
-            let start_date = today - Duration::days(days_to_lookback);
-            let end_date = today - Duration::days(1);
-            let request = bars::BarsReqInit {
-                limit: Some(days_to_lookback as usize),
-                ..Default::default()
-            }
-            .init(symbol, start_date, end_date, bars::TimeFrame::OneDay);
-
-            let res = client.issue::<bars::Get>(&request).await.unwrap();
-            res.bars
-        }
+    pub fn get_snapshots(&self) -> HashMap<String, Num> {
+        self.snapshots.clone()
     }
 
-    pub async fn subscribe(&mut self, symbol: String) {
-        let symbols = match self
-            .stream_handler
-            .subscribe_to_mktdata(vec![symbol.clone()].into())
-            .await
-        {
-            Err(val) => {
-                error!("Failed to subscribe {val:?}");
-                return;
-            }
-            Ok(val) => val,
-        };
-        self.symbols = symbols;
-    }
-
-    pub async fn unsubscribe(&mut self, symbol: String) {
-        let symbols = match self
-            .stream_handler
-            .unsubscribe_from_stream(vec![symbol.clone()].into())
-            .await
-        {
-            Err(val) => {
-                error!("Failed to unsubscribe {val:?}");
-                return;
-            }
-            Ok(val) => val,
-        };
-        self.symbols = symbols;
-    }
-
-    pub async fn unsubscribe_all(&mut self) {
-        let symbol_list = match self.symbols.clone() {
-            stream::Symbols::List(val) => val,
-            _ => stream::SymbolList::default(),
-        };
-        if symbol_list.len() == 0 {
-            return;
-        }
-        let symbols = match self
-            .stream_handler
-            .unsubscribe_from_stream(symbol_list)
-            .await
-        {
-            Err(val) => {
-                error!("Failed to unsubscribe {val:?}");
-                return;
-            }
-            Ok(val) => val,
-        };
-        self.symbols = symbols;
+    pub fn capture_data(&mut self, mktdata_update: &stream::Trade) {
+        let symbol = &mktdata_update.symbol;
+        self.snapshots
+            .insert(symbol.clone(), mktdata_update.trade_price.clone());
     }
 }

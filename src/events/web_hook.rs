@@ -1,8 +1,10 @@
 use std::collections::HashMap;
-use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use axum::{response, routing, Router};
+use axum::response;
+use axum::routing;
+use axum::Router;
+use tokio::sync::broadcast::Sender;
 use tower_http::cors::CorsLayer;
 
 use tracing::{error, info};
@@ -13,13 +15,13 @@ use anyhow::Result;
 
 use super::Direction;
 use super::Event;
+use super::MktSignal;
 use super::PortAction;
 use super::Side;
 use super::Source;
-use crate::events::MktSignal;
 
 async fn post_event(
-    sender: mpsc::UnboundedSender<Event>,
+    sender: Sender<Event>,
     response::Json(payload): response::Json<HashMap<String, String>>,
 ) -> response::Json<Value> {
     info!("Received post from webhook, payload: {payload:?}");
@@ -65,11 +67,11 @@ impl WebHook {
         WebHook { shutdown_signal }
     }
 
-    pub async fn run(&mut self, sender: mpsc::UnboundedSender<Event>) -> Result<()> {
+    pub async fn run(&mut self, sender: Sender<Event>) -> Result<()> {
         let app = Router::new()
             .route(
                 "/v1/mktsignal",
-                routing::post(move |body| post_event(sender.clone(), body)),
+                routing::post(move |body| post_event(sender, body)),
             )
             .layer(CorsLayer::permissive());
 
