@@ -1,5 +1,9 @@
 use apca::api::v2::position;
 
+use std::sync::Arc;
+use tokio::sync::RwLock;
+
+use anyhow::Result;
 use std::fmt;
 
 #[derive(Debug, Clone)]
@@ -41,5 +45,30 @@ impl fmt::Display for MktPosition {
             self.position.current_price.as_ref().unwrap(),
             self.position.unrealized_gain_total.as_ref().unwrap()
         )
+    }
+}
+
+pub struct MktPositions {
+    connectors: Arc<Connectors>,
+    mktpositions: RwLock<Hashmap<String, MktPosition>>
+}
+
+impl MktPositions {
+    pub fn new(connectors: &Arc<Connectors>) -> Self {
+        MktPositions {
+            connectors: Arc::clone(connectors),
+            mktpositions: RwLock::new(HashMap::default()),
+        }
+    }
+
+    pub async fn update_positions(&mut self) -> Result<()> {
+        let positions = self.connectors.get_positions().await?;
+        let mut mktpositions = self.mktpositions.write().await;
+        for position in &positions {
+            let mktposition = MktPosition::new(position, Some("00cl1"));
+            info!("{mktposition}");
+            *mktpositions.insert(mktposition.get_position().symbol.clone(), mktposition);
+        }
+        Ok(())
     }
 }

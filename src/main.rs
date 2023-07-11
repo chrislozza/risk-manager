@@ -1,5 +1,9 @@
 use clap::Parser;
-use tracing::{debug, error, info, warn};
+
+use tracing::debug; 
+use tracing::info; 
+use tracing::warn;
+use tracing::error; 
 
 mod db_client;
 mod events;
@@ -23,22 +27,13 @@ use tokio_util::sync::CancellationToken;
 
 use std::env;
 
-//async fn log_init(shutdown_signal: CancellationToken, project_id: &str, logging_name: Option<&str>) -> Result<()> {
-//    let gcp_logger = match logging_name {
-//        Some(name) => Some(CloudLogging::new(name, project_id, shutdown_signal).await?),
-//        _ => None,
-//    };
-//
-//    if let Err(err) = log::set_boxed_logger(Box::new(SimpleLogger::new(gcp_logger)))
-//        .map(|()| log::set_max_level(LevelFilter::Info))
-//    {
-//        bail!("Error caught in logging setup, error={err}")
-//    }
-//
-//    Ok(())
-//}
-//
-/// Simple program to greet a person
+#[derive(Debug, Clone)]
+pub enum Event {
+    Trade(stream::Trade),
+    OrderUpdate(updates::OrderUpdate),
+    MktSignal(MktSignal),
+}
+
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
@@ -77,28 +72,39 @@ async fn main() {
         }
     };
 
-    let (send_mkt_signals, mut receive_mkt_signals) = mpsc::unbounded_channel();
-
     let key = env::var("KEY").expect("Failed to read the 'key' environment variable.");
     let secret = env::var("SECRET").expect("Failed to read the 'secret' environment variable.");
 
     debug!("Found key: {key}, secret: {secret}");
 
     let mut platform = Platform::new(
-        shutdown_signal.clone(),
         settings.clone(),
         &key,
         &secret,
         is_live,
-    );
-    let mut publisher = EventPublisher::new(shutdown_signal.clone(), settings).await;
+        shutdown_signal.clone(),
+    ).unwrap();
+    let mut publisher = EventPublisher::new(shutdown_signal.clone(), settings).await.unwrap();
     info!("Initialised components");
 
-    let _ = platform.run().await;
-    let _ = publisher.run(&send_mkt_signals).await;
+    let platform_events = match platform.startup().await {
+        Ok(event_handler) => event_handler,
+        Err(err) => {
+            error!("Platform failed in startup, exiting app...");
+            std::process::exit(1);
+        }
+    };
+    let publisher_events = match publisher.startup().await {
+        Ok(event_handler) => event_handler,
+        Err(err) => {
+            error!("Publisher failed in startup, exiting app...");
+            std::process::exit(1);
+        }
+    };
+    let is_graceful_shutdown = false;
     loop {
         tokio::select! {
-            event = receive_mkt_signals.recv() => {
+            event = publisher_events.recv() => {
                 if let Event::MktSignal(event) = event.unwrap() {
                     info!("Recieved an event {event:?}, creating new position");
                     if let Err(err) = platform.create_position(&event).await {
@@ -107,19 +113,22 @@ async fn main() {
                 }
             }
             _ = shutdown_signal.cancelled() => {
-                warn!("exiting early");
-                std::process::exit(1)
+                if is_graceful_shutdown {
+                    std::process::exit(0);
+                }
+                else {
+                    warn!("exiting early");
+                    std::process::exit(1)
+                }
             }
             _ = signal::ctrl_c() => {
-                info!("Keyboard shutdown detected");
-                let _ = publisher.shutdown().await;
-                let _ = platform.shutdown().await;
-                break
+                is_graceful_shutdown = true; 
+                info!("Graceful shutdown initiated");
+                shutdown_signal.cancel();
             }
             _ = sleep(Duration::from_secs(180)) => {
                 platform.print_status().await;
             }
         }
     }
-    std::process::exit(0);
 }

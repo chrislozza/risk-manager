@@ -1,67 +1,83 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{error, info};
+
+use tracing::debug; 
+use tracing::info; 
+use tracing::warn;
+use tracing::error; 
 
 use apca::api::v2::updates;
 use apca::data::v2::stream;
 
-use super::mktorder::OrderAction;
-use super::AccountDetails;
-use super::Locker;
-
-use super::MktData;
-use super::MktOrder;
-use super::Trading;
-
-use super::Event;
-use super::MktPosition;
-
-use crate::float_to_num;
-use anyhow::Result;
-
-use crate::events::MktSignal;
-use crate::events::Side;
-use crate::platform::locker::{LockerStatus, TransactionType};
-use crate::platform::risk_sizing::RiskManagement;
-use crate::Settings;
-
 use num_decimal::Num;
 
 use tokio::sync::broadcast;
+use tokio_util::sync::CancellationToken;
+use anyhow::Result;
+
+use crate::float_to_num;
+use super::Settings;
+
+use super::AccountDetails;
+use super::locker::Locker;
+use super::order_handler::OrderHandler;
+use super::Event;
+
+use super::mktdata::MktData;
+use super::web_clients::Connectors;
+
+use super::data::mktorder::MktOrder;
+use super::data::mktorder::MktOrders;
+use super::data::mktposition::MktPosition;
+use super::data::mktposition::MktPositions;
+use super::data::account::AccountDetails;
 
 pub struct Engine {
-    pub account: AccountDetails,
-    pub mktdata: MktData,
-    pub trading: Trading,
-    pub locker: Locker,
-    pub positions: HashMap<String, MktPosition>,
-    pub orders: HashMap<String, MktOrder>,
+    account: AccountDetails,
+    mktdata: MktData,
+    trading: Trading,
+    locker: Locker,
+    mktpositions: MktPositions,
+    mktorders: MktOrders,
+    connectors : Connectors,
     settings: Settings,
 }
 
 impl Engine {
     pub fn new(
         settings: Settings,
-        account: AccountDetails,
-        mktdata: MktData,
-        trading: Trading,
-        locker: Locker,
+        key: &str,
+        secret: &str,
+        is_live: bool,
+        shutdown_signal: CancellationToken,
     ) -> Arc<Mutex<Self>> {
+        let connectors = Connectors::new(key, secret, is_live, shutdown_signal); 
+        let account = AccountDetails::new(&connectors);
+        let trading = OrderHandler::new(&connectors);
+        let mktdata = MktData::new(&connectors);
+        let mktorders = MktOrders::new(&connectors);
+        let mktpositions = MktPositions::new(&connectors);
+        let locker = Locker::new();
         Arc::new(Mutex::new(Engine {
-            settings,
             account,
             mktdata,
             trading,
             locker,
-            positions: HashMap::default(),
-            orders: HashMap::default(),
+            mktpositions,
+            mktorders,
+            connectors,  
+            settings,
         }))
     }
 
-    pub async fn startup(&mut self) -> (broadcast::Receiver<Event>, broadcast::Receiver<Event>) {
+    pub async fn startup(&mut self) -> Result<broadcast::Receiver<Event>> {
         let _ = self.account.startup().await;
         let (positions, orders) = self.trading.startup().await;
+        
+        let 
+
+
         self.mktdata.startup(&orders, &positions).await;
         for mktorder in &orders {
             let order = mktorder.1.get_order();
@@ -83,20 +99,13 @@ impl Engine {
         }
         self.orders = orders;
         self.positions = positions;
-        (self.trading.stream_reader(), self.mktdata.stream_reader())
+        self.connectors.startup(&self.orders, &self.positions);
+        Ok(self.connectors.subscribe_to_streams())
     }
 
     pub async fn shutdown(&self) {
         self.trading.shutdown().await;
         self.mktdata.shutdown().await;
-    }
-
-    pub fn get_mktorders(&self) -> &HashMap<String, MktOrder> {
-        &self.orders
-    }
-
-    pub fn get_mktpositions(&self) -> &HashMap<String, MktPosition> {
-        &self.positions
     }
 
     async fn update_mktpositions(&mut self) {
@@ -126,7 +135,6 @@ impl Engine {
             &self.mktdata,
         )
         .await?;
-        let side = Self::convert_side(&mkt_signal.side);
         let mktorder = self
             .trading
             .create_position(
@@ -141,22 +149,10 @@ impl Engine {
         Ok(())
     }
 
-    pub async fn print_status(&mut self) {
+    pub async fn update_status(&mut self) {
         let _ = self.account.refresh_account_details().await;
-        if let Ok(positions) = self.trading.get_positions().await {
-            self.positions = positions;
-        }
-        if let Ok(orders) = self.trading.get_orders().await {
-            self.orders = orders;
-        }
-    }
-
-    fn get_gross_position_value(&self) -> Num {
-        let mut gross_position_value = Num::from(0);
-        for order in self.get_mktorders().values() {
-            gross_position_value += order.market_value();
-        }
-        gross_position_value
+        let _ = self.mktpositions.update_positions().await;
+        let _ = self.mktorders.update_positions().await;
     }
 
     async fn size_position(
@@ -167,20 +163,13 @@ impl Engine {
         mktdata: &MktData,
     ) -> Result<Num> {
         let risk_tolerance = float_to_num!(0.02);
-        let _total_equity_per_strategy = total_equity / number_of_strategies;
-        let risk_per_trade = total_equity * risk_tolerance;
+        let total_equity_per_strategy = total_equity / number_of_strategies;
+        let risk_per_trade = total_equity_per_strategy  * risk_tolerance;
         let atr = RiskManagement::get_atr(symbol, mktdata).await?;
         let atr_stop = atr.clone() * float_to_num!(multiplier);
         let position_size = risk_per_trade / atr_stop.clone();
         info!("Position size: {position_size} from equity: {total_equity} with atr: {atr}, atr_stop: {atr_stop}");
         Ok(position_size)
-    }
-
-    fn convert_side(side: &Side) -> apca::api::v2::order::Side {
-        match side {
-            Side::Buy => apca::api::v2::order::Side::Buy,
-            Side::Sell => apca::api::v2::order::Side::Sell,
-        }
     }
 
     pub async fn mktdata_update(&mut self, mktdata_update: &stream::Trade) {
@@ -209,7 +198,7 @@ impl Engine {
         }
     }
 
-    pub async fn order_update(&mut self, order_update: &updates::OrderUpdate) {
+    pub async fn order_update(&mut self, order_update: &updates::OrderUpdate) -> Result<()> {
         match order_update.event {
             updates::OrderStatus::New => {
                 self.handle_new(order_update);
@@ -223,24 +212,36 @@ impl Engine {
             }
             _ => info!("Not listening to event {0:?}", order_update.event),
         }
+        Ok(())
     }
 
-    fn handle_cancel_reject(&mut self, order_update: &updates::OrderUpdate) {
-        let mktorder = &self.orders[&order_update.order.symbol];
+    fn handle_cancel_reject(&mut self, order_update: &updates::OrderUpdate) -> Result<()> {
+        let symbol = &order_update.order.symbol;
+        let mktorder = match &self.mktorders.get_order(&symbol.clone()).await? {
+            Ok(order) => order,
+            Err(err) => bail!("Failed to find order for symbol: {symbol.clone()}, error: {err}")
+        };
+
         match mktorder.get_action() {
             OrderAction::Create => {
-                self.locker.complete(&order_update.order.symbol);
+                self.locker.complete(symbol);
             }
-            OrderAction::Liquidate => self.locker.revive(&order_update.order.symbol),
+            OrderAction::Liquidate => self.locker.revive(symbol),
         };
+        Ok(())
     }
 
     fn handle_new(&mut self, order_update: &updates::OrderUpdate) {
-        let mktorder = &self.orders[&order_update.order.symbol];
+        let symbol = &order_update.order.symbol;
+        let mktorder = &self.mktorders.get_order(&symbol.clone()).await? {
+            Ok(order) => order,
+            Err(err) => bail!("Failed to find order for symbol: {symbol.clone()}, error: {err}")
+        };
+
         if let OrderAction::Create = mktorder.get_action() {
             let strategy_cfg = &self.settings.strategies.configuration[mktorder.get_strategy()];
             self.locker.monitor_trade(
-                &order_update.order.symbol,
+                &symbol,
                 order_update.order.limit_price.as_ref().unwrap(),
                 strategy_cfg,
                 TransactionType::Order,
@@ -248,13 +249,18 @@ impl Engine {
         };
     }
 
-    fn handle_fill(&mut self, order_update: &updates::OrderUpdate) {
-        let mktorder = &self.orders[&order_update.order.symbol];
+    fn handle_fill(&mut self, order_update: &updates::OrderUpdate) -> Result<()> {
+        let symbol = &order_update.order.symbol;
+        let mktorder = &self.mktorders.get_order(&symbol.clone()).await? {
+            Ok(order) => order,
+            Err(err) => bail!("Failed to find order for symbol: {symbol.clone()}, error: {err}")
+        };
+
         match mktorder.get_action() {
             OrderAction::Create => {
                 let strategy_cfg = &self.settings.strategies.configuration[mktorder.get_strategy()];
                 self.locker.monitor_trade(
-                    &order_update.order.symbol,
+                    &symbol.clone(),
                     &order_update.order.average_fill_price.clone().unwrap(),
                     strategy_cfg,
                     TransactionType::Position,
@@ -262,5 +268,40 @@ impl Engine {
             }
             OrderAction::Liquidate => self.locker.complete(&order_update.order.symbol),
         };
+        Ok(())
+    }
+
+    pub fn subscribe_to_events(&self) -> Receiver<Event> {
+        self.connectors.subscribe_to_streams()
+    }
+
+    pub async fn run(engine: Arc<Mutex<Engine>>, shutdown_signal: CancellationToken) -> Result<()> {
+        tokio::spawn(async move {
+            let event_subscriber = engine.lock().await.subscribe_to_events();
+            loop {
+                tokio::select!(
+                    event = event_subscriber.recv() => {
+                        match event {
+                            Ok(Event::OrderUpdate(event)) => {
+                                debug!("Found a trade event: {event:?}");
+                                engine.lock().await.order_update(&event).await;
+                            },
+                            Ok(Event::Trade(event)) => {
+                                debug!("Found a mkdata event: {event:?}");
+                                engine.lock().await.mktdata_update(&event).await;
+                            }
+                            Err(err) => {
+                                error!("Unknown error: {err}");
+                                shutdown_signal.cancel();
+                            }
+                        }
+                    }
+                _ = shutdown_signal.cancelled() => {
+                    break;
+                });
+            }
+            info!("Shutting down event loop in platform");
+        });
+        Ok(())
     }
 }

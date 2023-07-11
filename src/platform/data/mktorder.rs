@@ -1,7 +1,11 @@
 use apca::api::v2::order;
 
+use tokio::sync::RwLock;
+use std::collections::hash_map::HashMap;
 use num_decimal::Num;
 use std::fmt;
+use std::vec::Vec;
+use anyhow::Result;
 
 #[derive(Debug, Clone)]
 pub enum OrderAction {
@@ -74,5 +78,42 @@ impl fmt::Display for MktOrder {
             quantity.round(),
             self.action
         )
+    }
+}
+
+
+pub struct MktOrders {
+    connectors: Arc<Connectors>,
+    mktorders: RwLock<Hashmap<String, MktOrder>>
+}
+
+impl MktOrders {
+    pub fn new(connectors: &Arc<Connectors>) -> Self {
+        MktOrders {
+            connectors: Arc::clone(connectors),
+            mktorders: RwLock::new(HashMap::default()),
+        }
+    }
+
+    pub async fn get_order(&mut self, symbol: &str) -> Result<MktOrder> {
+        let mktorders = self.mktorders.read().await;
+        *mktorders[symbol]
+    }
+
+    pub async fn get_orders(&self) -> Result<Vec<MktOrder>> {
+        let mktorders = self.mktorders.read().await;
+        let orders = Vec::from_iter(mktorders.keys().map(|s| *s));
+        Ok(orders)
+    }
+
+    pub async fn update_orders(&mut self) -> Result<()> {
+        let orders = self.connectors.get_orders().await?;
+        let mut mktorders = self.mktorders.write().await;
+        for order in &orders {
+            let mktorder = MktOrder::new(OrderAction::Create, order, Some("00cl1"));
+            info!("{mktorder}");
+            *mktorders.insert(mktorder.get_order().symbol.clone(), mktorder);
+        }
+        Ok(())
     }
 }

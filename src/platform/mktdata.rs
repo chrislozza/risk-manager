@@ -1,68 +1,58 @@
-use apca::data::v2::{bars, stream};
+use apca::data::v2::bars;
+use apca::data::v2::stream;
 use apca::Client;
-use chrono::{Duration, Utc};
+use chrono::Utc;
+use chrono::Duration;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::{error, info};
+use anyhow::bail;
+use anyhow::Result;
+
+use tracing::debug; 
+use tracing::info; 
+use tracing::warn;
+use tracing::error; 
 
 use tokio::sync::broadcast;
-
-use super::mktorder;
-use super::mktposition;
-use super::stream_handler::StreamHandler;
 use super::Event;
 use tokio_util::sync::CancellationToken;
 
+use super::data::mktorder::MktOrders;
+use super::data::mktposition::MktPositions;
+
 pub struct MktData {
-    client: Arc<Mutex<Client>>,
-    symbols: stream::Symbols,
-    is_alive: Arc<Mutex<bool>>,
-    stream_handler: StreamHandler,
-    receiver: broadcast::Receiver<Event>,
-    sender: broadcast::Sender<Event>,
+    connectors: Arc<Connectors>,
 }
 
 impl MktData {
-    pub fn new(client: Arc<Mutex<Client>>, shutdown_signal: CancellationToken) -> Self {
-        let (sender, receiver) = broadcast::channel(100);
-        let stream_handler =
-            StreamHandler::new(Arc::clone(&client), sender.clone(), shutdown_signal);
+    pub fn new(connectors: &Arc<Connectors>) -> Self {
         MktData {
-            client,
-            symbols: stream::Symbols::default(),
-            is_alive: Arc::new(Mutex::new(false)),
-            stream_handler,
-            receiver,
-            sender,
+            connectors: Arc::clone(connectors)
         }
     }
 
     fn build_symbol_list(
         &self,
-        orders: &HashMap<String, mktorder::MktOrder>,
-        positions: &HashMap<String, mktposition::MktPosition>,
+        orders: &MktOrders,
+        positions: &MktPositions,
     ) -> Vec<String> {
         let mut symbols = Vec::<String>::default();
-        for mktorder in orders.values() {
+        for mktorder in orders.get_orders() {
             symbols.push(mktorder.get_order().symbol.clone());
         }
 
-        for mktposition in positions.values() {
+        for mktposition in positions.get_positions() {
             symbols.push(mktposition.get_position().symbol.clone());
         }
         symbols
     }
 
-    pub fn stream_reader(&self) -> broadcast::Receiver<Event> {
-        self.sender.subscribe()
-    }
-
     pub async fn startup(
         &mut self,
-        orders: &HashMap<String, mktorder::MktOrder>,
-        positions: &HashMap<String, mktposition::MktPosition>,
-    ) {
+        orders: &MktOrders,
+        positions: &MktPositions,
+    ) -> Result<()> {
         let symbols = self.build_symbol_list(orders, positions);
         if symbols.is_empty() {
             info!("No symbols to subscribe to");
@@ -70,17 +60,15 @@ impl MktData {
         }
 
         let symbols = match self
-            .stream_handler
+            .connectors
             .subscribe_to_mktdata(symbols.into())
-            .await
+            .await?
         {
-            Err(err) => {
-                error!("Failed to subscribe to stream, error: {err:?}");
-                panic!("{:?}", err);
-            }
+            Err(err) => bail!("Failed to subscribe to stream, error: {err:?}"),
             Ok(val) => val,
         };
         self.symbols = symbols;
+        Ok(())
     }
 
     pub async fn shutdown(&self) {
@@ -99,14 +87,14 @@ impl MktData {
             }
             .init(symbol, start_date, end_date, bars::TimeFrame::OneDay);
 
-            let res = client.issue::<bars::Get>(&request).await.unwrap();
-            res.bars
+            let result = self.connectors.get_historical_bars(request).await?
+            result.bars
         }
     }
 
     pub async fn subscribe(&mut self, symbol: String) {
         let symbols = match self
-            .stream_handler
+            .connectors
             .subscribe_to_mktdata(vec![symbol.clone()].into())
             .await
         {
@@ -121,7 +109,7 @@ impl MktData {
 
     pub async fn unsubscribe(&mut self, symbol: String) {
         let symbols = match self
-            .stream_handler
+            .connectors
             .unsubscribe_from_stream(vec![symbol.clone()].into())
             .await
         {
@@ -143,7 +131,7 @@ impl MktData {
             return;
         }
         let symbols = match self
-            .stream_handler
+            .connectors
             .unsubscribe_from_stream(symbol_list)
             .await
         {

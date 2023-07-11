@@ -1,10 +1,13 @@
 use google_cloud_default::WithAuthExt;
 
-use google_cloud_pubsub::client::{Client, ClientConfig};
+use google_cloud_pubsub::client::Client;
+use google_cloud_pubsub::client::ClientConfig;
 
-use tracing::{info, warn};
+use tracing::info; 
+use tracing::warn;
+use tracing::error; 
 
-use tokio::sync::mpsc;
+use tokio::sync::broadcast::Sender;
 use tokio_util::sync::CancellationToken;
 
 use anyhow::Result;
@@ -22,25 +25,25 @@ pub struct GcpPubSub {
 }
 
 impl GcpPubSub {
-    pub async fn new(shutdown_signal: CancellationToken, settings: Settings) -> Self {
-        let config = ClientConfig::default().with_auth().await.unwrap();
-        GcpPubSub {
+    pub async fn new(shutdown_signal: CancellationToken, settings: Settings) -> Result<Self> {
+        let config = ClientConfig::default().with_auth().await?;
+        Ok(GcpPubSub {
             client: Client::new(config).await.unwrap(),
             shutdown_signal,
             subscription_name: settings.gcp_subscription,
-        }
+        })
     }
 
-    pub async fn run(&self, send_mkt_signals: mpsc::UnboundedSender<Event>) -> Result<()> {
+    pub async fn run(&self, event_publisher: broadcast::Sender<Event>) -> Result<()> {
         info!("PubSub subscribing to {}", &self.subscription_name);
         let subscriber = self.client.subscription(&self.subscription_name);
         //subscribe
-        let cancel_receiver = self.shutdown_signal.clone();
+        let shutdown_signal = self.shutdown_signal.clone();
+        let sender = event_publisher.clone();
         let _ = tokio::spawn(async move {
             let _ = subscriber
                 .receive(
                     move |message, _ctx| {
-                        let sender = send_mkt_signals.clone();
                         async move {
                             if let Err(err) = message.ack().await {
                                 warn!("Failed to ack gcp message, error: {err}");
@@ -60,7 +63,7 @@ impl GcpPubSub {
                             }
                         }
                     },
-                    cancel_receiver,
+                    shutdown_signal,
                     None,
                 )
                 .await;

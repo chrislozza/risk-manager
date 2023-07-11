@@ -4,6 +4,7 @@ use std::time::SystemTime;
 use tokio_postgres::{Client, Error, NoTls, Statement};
 use tracing::info;
 use uuid::Uuid;
+use crate::utils::get_utc_now_str;
 
 use anyhow::Result;
 
@@ -69,16 +70,18 @@ impl PostgresConnector {
         self.client.prepare(&query).await
     }
 
-    pub async fn insert(&self, table: &str, values: HashMap<&str, &str>) -> Result<()> {
-        let _id = Uuid::new_v4();
-        let _timestamp = SystemTime::now();
+    pub async fn insert(&self, table: &str, mut values: HashMap<&str, &str>) -> Result<()> {
+        let id = Uuid::new_v4().to_string();
+        let timestamp = get_utc_now_str(SystemTime::now());
+        values.insert("id", &id);
+        values.insert("timestamp", &timestamp);
         let stmt = self.prepare_insert_statement(table, &values).await?;
         let data = Vec::from_iter(values.values().map(|s| String::from(*s)));
         self.client.execute_raw(&stmt, &data[..]).await?;
         Ok(())
     }
 
-    pub async fn update(&self, table: &str, values: HashMap<&str, &str>) -> Result<()> {
+    pub async fn update(&self, table: &str, values: HashMap<&str, &str>, id: &str) -> Result<()> {
         let stmt = self.prepare_update_statement(table, &values).await?;
         let data = Vec::from_iter(values.values().map(|s| String::from(*s)));
         self.client.execute_raw(&stmt, &data[..]).await?;
