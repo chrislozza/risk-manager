@@ -3,9 +3,9 @@ use google_cloud_default::WithAuthExt;
 use google_cloud_pubsub::client::Client;
 use google_cloud_pubsub::client::ClientConfig;
 
-use tracing::info; 
+use tracing::error;
+use tracing::info;
 use tracing::warn;
-use tracing::error; 
 
 use tokio::sync::broadcast::Sender;
 use tokio_util::sync::CancellationToken;
@@ -43,24 +43,21 @@ impl GcpPubSub {
         let _ = tokio::spawn(async move {
             let _ = subscriber
                 .receive(
-                    move |message, _ctx| {
-                        async move {
-                            if let Err(err) = message.ack().await {
-                                warn!("Failed to ack gcp message, error: {err}");
-                            }
-                            let data = std::str::from_utf8(&message.message.data)
-                                .unwrap()
-                                .to_string();
-                            let package: HashMap<String, String> =
-                                serde_json::from_str(&data).unwrap();
-                            let payload = &package["payload"];
+                    move |message, _ctx| async move {
+                        if let Err(err) = message.ack().await {
+                            warn!("Failed to ack gcp message, error: {err}");
+                        }
+                        let data = std::str::from_utf8(&message.message.data)
+                            .unwrap()
+                            .to_string();
+                        let package: HashMap<String, String> = serde_json::from_str(&data).unwrap();
+                        let payload = &package["payload"];
 
-                            if let Ok(event) = serde_json::from_str::<MktSignal>(payload) {
-                                info!("Data pulled from pubsub {event:?}");
-                                let _ = sender.send(Event::MktSignal(event));
-                            } else {
-                                warn!("Failed to parse unknown message");
-                            }
+                        if let Ok(event) = serde_json::from_str::<MktSignal>(payload) {
+                            info!("Data pulled from pubsub {event:?}");
+                            let _ = sender.send(Event::MktSignal(event));
+                        } else {
+                            warn!("Failed to parse unknown message");
                         }
                     },
                     shutdown_signal,

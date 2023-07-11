@@ -1,11 +1,11 @@
 use apca::api::v2::order;
 
-use tokio::sync::RwLock;
-use std::collections::hash_map::HashMap;
+use anyhow::Result;
 use num_decimal::Num;
+use std::collections::hash_map::HashMap;
 use std::fmt;
 use std::vec::Vec;
-use anyhow::Result;
+use tokio::sync::RwLock;
 
 #[derive(Debug, Clone)]
 pub enum OrderAction {
@@ -81,10 +81,9 @@ impl fmt::Display for MktOrder {
     }
 }
 
-
 pub struct MktOrders {
     connectors: Arc<Connectors>,
-    mktorders: RwLock<Hashmap<String, MktOrder>>
+    mktorders: RwLock<Hashmap<String, MktOrder>>,
 }
 
 impl MktOrders {

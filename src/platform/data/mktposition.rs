@@ -50,7 +50,7 @@ impl fmt::Display for MktPosition {
 
 pub struct MktPositions {
     connectors: Arc<Connectors>,
-    mktpositions: RwLock<Hashmap<String, MktPosition>>
+    mktpositions: RwLock<Hashmap<String, MktPosition>>,
 }
 
 impl MktPositions {

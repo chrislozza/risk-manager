@@ -1,8 +1,6 @@
-
-
 mod account;
-mod mktposition;
 mod mktorder;
+mod mktposition;
 
 use super::data::account::AccountDetails;
 use super::data::mktorder::MktOrder;

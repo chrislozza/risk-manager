@@ -4,7 +4,6 @@ use chrono::offset::Utc;
 use chrono::DateTime;
 use std::time::SystemTime;
 
-
 pub fn print_type<T>(_: &T) -> &'static str {
     type_name::<T>()
 }

@@ -2,9 +2,9 @@ use apca::api::v2::updates;
 use apca::data::v2::stream;
 use apca::Client;
 
-use tracing::info; 
+use tracing::error;
+use tracing::info;
 use tracing::warn;
-use tracing::error; 
 
 use anyhow::{bail, Result};
 use std::rc::Rc;
@@ -36,11 +36,8 @@ impl WebSocket {
     }
 
     pub async fn subscribe_to_order_updates(&self, client: &Client) -> Result<()> {
-        let (mut stream, _subscription) = 
-            client
-            .subscribe::<updates::OrderUpdates>()
-            .await
-            .unwrap();
+        let (mut stream, _subscription) =
+            client.subscribe::<updates::OrderUpdates>().await.unwrap();
 
         let subscriber = self.event_publisher.clone();
         let shutdown_signal = self.shutdown_signal.clone();
@@ -95,7 +92,7 @@ impl WebSocket {
     pub async fn subscribe_to_mktdata(
         &mut self,
         symbols: stream::SymbolList,
-        client: &Client
+        client: &Client,
     ) -> Result<stream::Symbols> {
         let (mut stream, mut subscription) = client
             .subscribe::<stream::RealtimeData<stream::IEX>>()
@@ -169,7 +166,8 @@ impl WebSocket {
 
     pub async fn unsubscribe_from_stream(
         &self,
-        symbols: stream::SymbolList,client: &Client
+        symbols: stream::SymbolList,
+        client: &Client,
     ) -> Result<stream::Symbols> {
         let (mut stream, mut subscription) = client
             .subscribe::<stream::RealtimeData<stream::IEX>>()

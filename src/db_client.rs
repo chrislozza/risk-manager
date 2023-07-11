@@ -1,10 +1,10 @@
 use super::settings::Settings;
+use crate::utils::get_utc_now_str;
 use std::collections::HashMap;
 use std::time::SystemTime;
 use tokio_postgres::{Client, Error, NoTls, Statement};
 use tracing::info;
 use uuid::Uuid;
-use crate::utils::get_utc_now_str;
 
 use anyhow::Result;
 

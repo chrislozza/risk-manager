@@ -26,11 +26,19 @@ struct EventClients {
 }
 
 impl EventClients {
-    pub async fn new(shutdown_signal: CancellationToken, settings: Settings) -> Result<Arc<Mutex<Self>>> {
+    pub async fn new(
+        shutdown_signal: CancellationToken,
+        settings: Settings,
+    ) -> Result<Arc<Mutex<Self>>> {
         let (publisher, mut subscriber) = broadcast::unbounded_channel();
         let pubsub = GcpPubSub::new(shutdown_signal.clone(), settings.clone()).await?;
         let webhook = WebHook::new(shutdown_signal).await;
-        Ok(Arc::new(Mutex::new(EventClients{ pubsub, webhook, subscriber, publisher })))
+        Ok(Arc::new(Mutex::new(EventClients {
+            pubsub,
+            webhook,
+            subscriber,
+            publisher,
+        })))
     }
 
     pub async fn startup(&self) -> Result<Receiver<Event>> {
@@ -46,4 +54,3 @@ impl EventClients {
         self.webhook.run(self.publisher.clone()).await
     }
 }
-

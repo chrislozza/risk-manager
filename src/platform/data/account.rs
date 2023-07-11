@@ -5,13 +5,13 @@ use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 use tokio::sync::Mutex;
-use tracing::info; 
+use tracing::error;
+use tracing::info;
 use tracing::warn;
-use tracing::error; 
 
-use tokio::sync::RwLock;
 use anyhow::bail;
 use anyhow::Result;
+use tokio::sync::RwLock;
 
 #[derive(Debug)]
 pub struct AccountDetails {
@@ -25,8 +25,12 @@ impl fmt::Display for AccountDetails {
         write!(
             f,
             "Account id[{}], equity[{}], cash[{}], buying_power[{}] is_margin[{}]",
-            account.id.to_string(), account.equity, account.cash, account.buying_power, account.shorting_enabled
-            )
+            account.id.to_string(),
+            account.equity,
+            account.cash,
+            account.buying_power,
+            account.shorting_enabled
+        )
     }
 }
 
@@ -35,7 +39,7 @@ impl AccountDetails {
         let account_details = connector.get_account_details().await?;
         Ok(AccountDetails {
             connectors: Arc::clone(connectors),
-            account: account_details
+            account: account_details,
         })
     }
 
@@ -50,7 +54,5 @@ impl AccountDetails {
         info!("{self}");
     }
 
-    async fn pull_account_details(connector: &Connectors) -> Result<account::Account> {
-        
-    }
+    async fn pull_account_details(connector: &Connectors) -> Result<account::Account> {}
 }

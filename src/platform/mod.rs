@@ -22,7 +22,6 @@ use super::events::Event;
 use super::events::MktSignal;
 use crate::Settings;
 use tokio_util::sync::CancellationToken;
-use trading::Trading;
 
 pub struct Platform {
     engine: Arc<Mutex<Engine>>,

@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use tokio_util::sync::CancellationToken;
 
 use axum::{response, routing, Router};
-use tower_http::cors::CorsLayer;
 use tokio::sync::broadcast::Sender;
+use tower_http::cors::CorsLayer;
 
 use tracing::{error, info};
 

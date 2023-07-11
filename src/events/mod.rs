@@ -11,9 +11,9 @@ use tokio_util::sync::CancellationToken;
 
 use anyhow::Result;
 
+mod event_clients;
 mod pub_sub;
 mod web_hook;
-mod event_clients;
 
 use super::Settings;
 use event_clients::EventClients;

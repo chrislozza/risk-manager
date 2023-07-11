@@ -2,24 +2,24 @@ use apca::api::v2::{asset, order, orders, position, positions};
 use num_decimal::Num;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 use std::thread;
+use std::time::Duration;
 use tokio::sync::Mutex;
 
-use tracing::debug; 
-use tracing::info; 
+use tracing::debug;
+use tracing::error;
+use tracing::info;
 use tracing::warn;
-use tracing::error; 
 
-use anyhow::Result;
 use anyhow::bail;
+use anyhow::Result;
 use tokio::sync::broadcast;
 
-use super::mktorder::OrderAction;
+use super::mktdata::MktData;
 use super::mktorder::MktOrder;
+use super::mktorder::OrderAction;
 use super::mktposition::MktPosition;
 use super::stream_handler::WebSocket;
-use super::mktdata::MktData;
 use super::Event;
 use crate::float_to_num;
 use tokio_util::sync::CancellationToken;
@@ -31,29 +31,29 @@ pub struct OrderHandler {
 impl OrderHandler {
     pub fn new(connectors: &Arc<Client>) -> Self {
         OrderHandler {
-            connectors: Arc::clone(connectors)
+            connectors: Arc::clone(connectors),
         }
     }
 
-//    pub async fn startup(&mut self) -> (HashMap<String, MktPosition>, HashMap<String, MktOrder>) {
-//        let orders = match self.get_orders().await {
-//            Ok(val) => val,
-//            Err(err) => panic!("{err:?}"),
-//        };
-//        let positions = match self.get_positions().await {
-//            Ok(val) => val,
-//            Err(err) => panic!("{err:?}"),
-//        };
-//        if let Err(err) = self.stream_handler.subscribe_to_order_updates().await {
-//            error!("Failed to subscribe to stream, error: {err:?}");
-//            panic!("{:?}", err);
-//        };
-//        (positions, orders)
-//    }
-//
-//    pub async fn shutdown(&self) {
-//        info!("Shutdown initiated");
-//    }
+    //    pub async fn startup(&mut self) -> (HashMap<String, MktPosition>, HashMap<String, MktOrder>) {
+    //        let orders = match self.get_orders().await {
+    //            Ok(val) => val,
+    //            Err(err) => panic!("{err:?}"),
+    //        };
+    //        let positions = match self.get_positions().await {
+    //            Ok(val) => val,
+    //            Err(err) => panic!("{err:?}"),
+    //        };
+    //        if let Err(err) = self.stream_handler.subscribe_to_order_updates().await {
+    //            error!("Failed to subscribe to stream, error: {err:?}");
+    //            panic!("{:?}", err);
+    //        };
+    //        (positions, orders)
+    //    }
+    //
+    //    pub async fn shutdown(&self) {
+    //        info!("Shutdown initiated");
+    //    }
 
     pub async fn create_position(
         &mut self,
