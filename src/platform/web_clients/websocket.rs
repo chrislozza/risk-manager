@@ -91,8 +91,8 @@ impl WebSocket {
 
     pub async fn subscribe_to_mktdata(
         &mut self,
-        symbols: stream::SymbolList,
         client: &Client,
+        symbols: stream::SymbolList,
     ) -> Result<stream::Symbols> {
         let (mut stream, mut subscription) = client
             .subscribe::<stream::RealtimeData<stream::IEX>>()
@@ -164,10 +164,10 @@ impl WebSocket {
         Ok(subscription.subscriptions().trades.clone())
     }
 
-    pub async fn unsubscribe_from_stream(
+    pub async fn unsubscribe_from_mktdata(
         &self,
-        symbols: stream::SymbolList,
         client: &Client,
+        symbols: stream::SymbolList,
     ) -> Result<stream::Symbols> {
         let (mut stream, mut subscription) = client
             .subscribe::<stream::RealtimeData<stream::IEX>>()
@@ -184,8 +184,7 @@ impl WebSocket {
             .unwrap()
         {
             self.shutdown_signal.cancel();
-            bail!("Unsubscribe error in the stream drive: {error:?}");
-        }
+            bail!("Unsubscribe error in the stream drive: {error:?}"); }
 
         Ok(subscription.subscriptions().trades.clone())
     }

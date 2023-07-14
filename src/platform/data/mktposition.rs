@@ -1,7 +1,6 @@
 use apca::api::v2::position;
 
 use std::sync::Arc;
-use tokio::sync::RwLock;
 
 use anyhow::Result;
 use std::fmt;
@@ -50,24 +49,32 @@ impl fmt::Display for MktPosition {
 
 pub struct MktPositions {
     connectors: Arc<Connectors>,
-    mktpositions: RwLock<Hashmap<String, MktPosition>>,
+    mktpositions: Hashmap<String, MktPosition>,
 }
 
 impl MktPositions {
     pub fn new(connectors: &Arc<Connectors>) -> Self {
         MktPositions {
             connectors: Arc::clone(connectors),
-            mktpositions: RwLock::new(HashMap::default()),
+            mktpositions: HashMap::default(),
         }
+    }
+
+    pub async fn get_position(&mut self, symbol: &str) -> Result<MktPosition> {
+        self.mktpositions[symbol]
+    }
+
+    pub async fn get_positions(&self) -> Result<Vec<MktPosition>> {
+        let positions = Vec::from_iter(self.mktpositions.keys().map(|s| *s));
+        Ok(positions)
     }
 
     pub async fn update_positions(&mut self) -> Result<()> {
         let positions = self.connectors.get_positions().await?;
-        let mut mktpositions = self.mktpositions.write().await;
         for position in &positions {
             let mktposition = MktPosition::new(position, Some("00cl1"));
             info!("{mktposition}");
-            *mktpositions.insert(mktposition.get_position().symbol.clone(), mktposition);
+            self.mktpositions.insert(mktposition.get_position().symbol.clone(), mktposition);
         }
         Ok(())
     }

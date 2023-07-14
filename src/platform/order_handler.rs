@@ -19,7 +19,7 @@ use super::mktdata::MktData;
 use super::mktorder::MktOrder;
 use super::mktorder::OrderAction;
 use super::mktposition::MktPosition;
-use super::stream_handler::WebSocket;
+use super::web_clients::Connectors;
 use super::Event;
 use crate::float_to_num;
 use tokio_util::sync::CancellationToken;
@@ -33,6 +33,10 @@ impl OrderHandler {
         OrderHandler {
             connectors: Arc::clone(connectors),
         }
+    }
+
+    pub async fn subscribe_to_events(&self) -> Result<()> {
+        self.connectors.subscibe_to_order_updates().await 
     }
 
     //    pub async fn startup(&mut self) -> (HashMap<String, MktPosition>, HashMap<String, MktOrder>) {
@@ -62,7 +66,7 @@ impl OrderHandler {
         target_price: Num,
         position_size: Num,
         side: Side,
-    ) -> Result<MktOrder> {
+    ) -> Result<()> {
         let limit_price = target_price.clone() * float_to_num!(1.07);
         let stop_price = target_price * float_to_num!(1.01);
         let amount = order::Amount::quantity(position_size.round());
@@ -79,17 +83,26 @@ impl OrderHandler {
             ..Default::default()
         }
         .init(symbol, side, amount);
-        self.connectors.place_order(request).await?
+        if let Err(error) = self.connectors.place_order(&request).await {
+            bail!("Failed to place order for request: {request:?}, error: {error}") 
+        }
+        Ok(())
     }
 
     pub async fn liquidate_position(&self, position: &MktPosition) -> Result<()> {
         let symbol = asset::Symbol::Sym(position.get_position().symbol);
-        self.connectors.close_position(request).await?
+        if let Err(error) = self.connectors.close_position(request).await {
+            bail!("Failed to liquidate position for symbol {position.symbol}, error={error}")
+        }
+        Ok(())
     }
 
     pub async fn cancel_order(&self, order: &MktOrder) -> Result<()> {
         let id = order.get_order().id;
-        self.connectors.cancel_order(id).await?
+        if let Err(error) = self.connectors.cancel_order(id).await {
+            bail!("Failed to cancel order for symbol {order.symbol}, error={error}")
+        }
+        Ok(())
     }
 
     fn convert_side(side: &Side) -> apca::api::v2::order::Side {

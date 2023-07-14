@@ -29,7 +29,7 @@ pub struct Platform {
 }
 
 impl Platform {
-    pub fn new(
+    pub async fn new(
         settings: Settings,
         key: &str,
         secret: &str,
@@ -37,7 +37,7 @@ impl Platform {
         shutdown_signal: CancellationToken,
     ) -> Result<Self> {
 
-        let engine = Engine::new(settings, key, secret, is_live, shutdown_signal);
+        let engine = Engine::new(settings, key, secret, is_live, shutdown_signal.clone()).await;
 
         info!("Initialised platform components");
         Ok(Platform {
@@ -48,7 +48,7 @@ impl Platform {
 
     pub async fn startup(
         &self,
-    ) -> Result<sync::broadcast::Receiver<Event>> {
+    ) -> Result<()> {
         self.engine.lock().await.startup().await
     }
 

@@ -16,12 +16,12 @@ use tokio::sync::RwLock;
 #[derive(Debug)]
 pub struct AccountDetails {
     connectors: Arc<Connectors>,
-    account: RwLock<account::Account>,
+    account: account::Account,
 }
 
 impl fmt::Display for AccountDetails {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let account = &self.account.read().await;
+        let account = &self.account;
         write!(
             f,
             "Account id[{}], equity[{}], cash[{}], buying_power[{}] is_margin[{}]",
@@ -35,7 +35,7 @@ impl fmt::Display for AccountDetails {
 }
 
 impl AccountDetails {
-    pub fn new(connectors: &Arc<Connectors>) -> Result<Self> {
+    pub async fn new(connectors: &Arc<Connectors>) -> Result<Self> {
         let account_details = connector.get_account_details().await?;
         Ok(AccountDetails {
             connectors: Arc::clone(connectors),
@@ -44,15 +44,13 @@ impl AccountDetails {
     }
 
     pub async fn equity(&self) -> Num {
-        self.account.read().await.equity
+        self.account.equity.clone()
     }
 
-    pub async fn update_account(&mut self) {
-        let details = self.connector.get_account_details().await?;
-        let account = self.account.write().await;
-        account = account_details;
+    pub async fn update_account(&mut self) -> Result<()> {
+        let details = self.connectors.get_account_details().await?;
+        self.account = account_details;
         info!("{self}");
+        Ok(())
     }
-
-    async fn pull_account_details(connector: &Connectors) -> Result<account::Account> {}
 }

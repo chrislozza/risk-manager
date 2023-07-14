@@ -7,6 +7,8 @@ use crate::settings::StrategyConfig;
 
 use num_decimal::Num;
 
+use super::Settings;
+
 #[derive(PartialEq, Clone, Copy)]
 pub enum LockerStatus {
     Active,
@@ -22,24 +24,14 @@ pub enum TransactionType {
 
 pub struct Locker {
     stops: HashMap<String, TrailingStop>,
-}
-
-struct TrailingStop {
-    symbol: String,
-    entry_price: Num,
-    trail_pc: Num,
-    pivot_points: [(i8, f64, f64); 4],
-    high_low: Num,
-    stop_loss_level: Num,
-    zone: i8,
-    status: LockerStatus,
-    t_type: TransactionType,
+    settings: Settings,
 }
 
 impl Locker {
-    pub fn new() -> Self {
+    pub fn new(settings: Settings) -> Self {
         Locker {
             stops: HashMap::new(),
+            settings,
         }
     }
 
@@ -47,9 +39,10 @@ impl Locker {
         &mut self,
         symbol: &String,
         entry_price: &Num,
-        strategy_cfg: &StrategyConfig,
+        strategy, &str,
         t_type: TransactionType,
     ) {
+        let strategy_cfg = self.settings.strategies.configuration[strategy];
         let multiplier = float_to_num!(strategy_cfg.trailing_size);
         let stop = TrailingStop::new(symbol.clone(), entry_price.clone(), multiplier, t_type);
         if self.stops.contains_key(symbol) {
@@ -107,6 +100,18 @@ impl Locker {
         }
         false
     }
+}
+
+struct TrailingStop {
+    symbol: String,
+    entry_price: Num,
+    trail_pc: Num,
+    pivot_points: [(i8, f64, f64); 4],
+    high_low: Num,
+    stop_loss_level: Num,
+    zone: i8,
+    status: LockerStatus,
+    t_type: TransactionType,
 }
 
 impl TrailingStop {

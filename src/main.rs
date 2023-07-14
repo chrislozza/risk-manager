@@ -83,11 +83,11 @@ async fn main() {
         &secret,
         is_live,
         shutdown_signal.clone(),
-    ).unwrap();
+    ).await.unwrap();
     let mut publisher = EventPublisher::new(shutdown_signal.clone(), settings).await.unwrap();
     info!("Initialised components");
 
-    let platform_events = match platform.startup().await {
+    match platform.startup().await {
         Ok(event_handler) => event_handler,
         Err(err) => {
             error!("Platform failed in startup, exiting app...");
