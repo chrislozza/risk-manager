@@ -2,10 +2,12 @@ use apca::api::v2::order;
 
 use anyhow::Result;
 use num_decimal::Num;
-use std::collections::hash_map::HashMap;
+use std::collections::HashMap;
 use std::fmt;
+use std::sync::Arc;
 use std::vec::Vec;
-use tokio::sync::RwLock;
+
+use super::super::web_clients::Connectors;
 
 #[derive(Debug, Clone)]
 pub enum OrderAction {
@@ -83,7 +85,7 @@ impl fmt::Display for MktOrder {
 
 pub struct MktOrders {
     connectors: Arc<Connectors>,
-    mktorders: Hashmap<String, MktOrder>,
+    mktorders: HashMap<String, MktOrder>,
 }
 
 impl MktOrders {
@@ -95,26 +97,26 @@ impl MktOrders {
     }
 
     pub async fn add_order(&mut self, order: MktOrder) -> Result<()> {
-        self.mktorders.insert(order.get_order().symbol, order);
+        self.mktorders
+            .insert(order.get_order().symbol.clone(), order);
         Ok(())
     }
 
-    pub async fn get_order(&mut self, symbol: &str) -> Result<MktOrder> {
-        self.mktorders[symbol]
+    pub async fn get_order(&mut self, symbol: &str) -> Result<&MktOrder> {
+        Ok(&self.mktorders[symbol])
     }
 
-
-    pub async fn get_orders(&self) -> Result<Vec<MktOrder>> {
-        let orders = Vec::from_iter(self.mktorders.keys().map(|s| *s));
-        Ok(orders)
+    pub async fn get_orders(&self) -> &HashMap<String, MktOrder> {
+        &self.mktorders
     }
 
     pub async fn update_orders(&mut self) -> Result<()> {
         let orders = self.connectors.get_orders().await?;
         for order in &orders {
-            let mktorder = MktOrder::new(OrderAction::Create, order, Some("00cl1"));
+            let mktorder = MktOrder::new(OrderAction::Create, order.clone(), Some("00cl1"));
             info!("{mktorder}");
-            self.mktorders.insert(mktorder.get_order().symbol.clone(), mktorder);
+            self.mktorders
+                .insert(mktorder.get_order().symbol.clone(), mktorder);
         }
         Ok(())
     }

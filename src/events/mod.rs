@@ -15,6 +15,7 @@ mod event_clients;
 mod pub_sub;
 mod web_hook;
 
+use super::Event;
 use super::Settings;
 use event_clients::EventClients;
 

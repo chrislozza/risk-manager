@@ -15,13 +15,14 @@ use anyhow::bail;
 use anyhow::Result;
 use tokio::sync::broadcast;
 
+use super::super::events::Side;
+use super::data::mktorder::MktOrder;
+use super::data::mktorder::OrderAction;
+use super::data::mktposition::MktPosition;
 use super::mktdata::MktData;
-use super::mktorder::MktOrder;
-use super::mktorder::OrderAction;
-use super::mktposition::MktPosition;
 use super::web_clients::Connectors;
 use super::Event;
-use crate::float_to_num;
+use crate::to_num;
 use tokio_util::sync::CancellationToken;
 
 pub struct OrderHandler {
@@ -29,14 +30,14 @@ pub struct OrderHandler {
 }
 
 impl OrderHandler {
-    pub fn new(connectors: &Arc<Client>) -> Self {
+    pub fn new(connectors: &Arc<Connectors>) -> Self {
         OrderHandler {
             connectors: Arc::clone(connectors),
         }
     }
 
     pub async fn subscribe_to_events(&self) -> Result<()> {
-        self.connectors.subscibe_to_order_updates().await 
+        self.connectors.subscibe_to_order_updates().await
     }
 
     //    pub async fn startup(&mut self) -> (HashMap<String, MktPosition>, HashMap<String, MktOrder>) {
@@ -65,10 +66,10 @@ impl OrderHandler {
         strategy: &str,
         target_price: Num,
         position_size: Num,
-        side: Side,
-    ) -> Result<()> {
-        let limit_price = target_price.clone() * float_to_num!(1.07);
-        let stop_price = target_price * float_to_num!(1.01);
+        side: &Side,
+    ) -> Result<MktOrder> {
+        let limit_price = target_price.clone() * to_num!(1.07);
+        let stop_price = target_price * to_num!(1.01);
         let amount = order::Amount::quantity(position_size.round());
         let side = Self::convert_side(&side);
         info!(
@@ -83,23 +84,30 @@ impl OrderHandler {
             ..Default::default()
         }
         .init(symbol, side, amount);
-        if let Err(error) = self.connectors.place_order(&request).await {
-            bail!("Failed to place order for request: {request:?}, error: {error}") 
+        match self.connectors.place_order(&request).await {
+            Err(error) => bail!("Failed to place order for request: {request:?}, error: {error}"),
+            Ok(order) => Ok(MktOrder::new(OrderAction::Create, order, Some(strategy))),
         }
-        Ok(())
     }
 
-    pub async fn liquidate_position(&self, position: &MktPosition) -> Result<()> {
+    pub async fn liquidate_position(&self, position: &MktPosition) -> Result<MktOrder> {
         let symbol = asset::Symbol::Sym(position.get_position().symbol);
-        if let Err(error) = self.connectors.close_position(request).await {
-            bail!("Failed to liquidate position for symbol {position.symbol}, error={error}")
+        if let Err(error) = self.connectors.close_position(&symbol).await {}
+        match self.connectors.close_position(&symbol).await {
+            Err(error) => {
+                bail!("Failed to liquidate position for symbol {position.symbol}, error={error}")
+            }
+            Ok(order) => Ok(MktOrder::new(
+                OrderAction::Liquidate,
+                order,
+                Some(position.get_strategy()),
+            )),
         }
-        Ok(())
     }
 
     pub async fn cancel_order(&self, order: &MktOrder) -> Result<()> {
         let id = order.get_order().id;
-        if let Err(error) = self.connectors.cancel_order(id).await {
+        if let Err(error) = self.connectors.cancel_order(&id).await {
             bail!("Failed to cancel order for symbol {order.symbol}, error={error}")
         }
         Ok(())

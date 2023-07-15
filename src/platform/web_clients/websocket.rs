@@ -19,7 +19,8 @@ use futures::TryStreamExt as _;
 
 use super::Event;
 
-pub struct WebSocket {
+#[derive(Debug)]
+pub(crate) struct WebSocket {
     event_publisher: broadcast::Sender<Event>,
     shutdown_signal: CancellationToken,
 }
@@ -52,6 +53,7 @@ impl WebSocket {
                         info!("Order Updates {result:?}");
                         result
                             .map(|data| {
+                                let updates::OrderUpdate { event, order } = data;
                                 let event =
                                     Event::OrderUpdate(updates::OrderUpdate { event, order });
                                 if let Err(broadcast::error::SendError(val)) =
@@ -174,7 +176,6 @@ impl WebSocket {
             .await?;
 
         let mut data = stream::MarketData::default();
-        data.set_bars(symbols.clone());
         data.set_trades(symbols);
 
         let unsubscribe = subscription.unsubscribe(&data).boxed_local().fuse();
@@ -184,7 +185,8 @@ impl WebSocket {
             .unwrap()
         {
             self.shutdown_signal.cancel();
-            bail!("Unsubscribe error in the stream drive: {error:?}"); }
+            bail!("Unsubscribe error in the stream drive: {error:?}");
+        }
 
         Ok(subscription.subscriptions().trades.clone())
     }

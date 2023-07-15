@@ -11,14 +11,15 @@ use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
 use anyhow::Result;
+use tokio::time::sleep;
+use tokio::time::Duration;
 
+use super::Event;
 use super::Settings;
 use pub_sub::GcpPubSub;
 use web_hook::WebHook;
 
-use tokio::time::{sleep, Duration};
-
-struct EventClients {
+pub struct EventClients {
     pubsub: GcpPubSub,
     webhook: WebHook,
     subscriber: Receiver<Event>,
@@ -30,7 +31,7 @@ impl EventClients {
         shutdown_signal: CancellationToken,
         settings: Settings,
     ) -> Result<Arc<Mutex<Self>>> {
-        let (publisher, mut subscriber) = broadcast::unbounded_channel();
+        let (publisher, mut subscriber) = broadcast::channel(32);
         let pubsub = GcpPubSub::new(shutdown_signal.clone(), settings.clone()).await?;
         let webhook = WebHook::new(shutdown_signal).await;
         Ok(Arc::new(Mutex::new(EventClients {
@@ -42,11 +43,11 @@ impl EventClients {
     }
 
     pub async fn startup(&self) -> Result<Receiver<Event>> {
-        Ok(self.publisher.subscribe_to_events())
+        Ok(self.subscribe_to_events())
     }
 
     pub fn subscribe_to_events(&self) -> Receiver<Event> {
-        self.publisher.subscribe
+        self.publisher.subscribe()
     }
 
     pub async fn run(&self) -> Result<()> {

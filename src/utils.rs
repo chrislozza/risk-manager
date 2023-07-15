@@ -14,7 +14,7 @@ pub fn get_utc_now_str(system_time: SystemTime) -> String {
 }
 
 #[macro_export]
-macro_rules! float_to_num {
+macro_rules! to_num {
     ($value: expr, $denom: expr) => {
         Num::new($value, $denom)
     };

@@ -5,12 +5,14 @@ use apca::api::v2::order;
 use apca::api::v2::orders;
 use apca::api::v2::position;
 use apca::api::v2::positions;
+use apca::data::v2::bars;
+use apca::data::v2::stream;
 use apca::ApiInfo;
 use apca::Client;
 
 use anyhow::bail;
 use anyhow::Result;
-use std::rc::Rc;
+use std::sync::Arc;
 use url::Url;
 
 use tokio::sync::broadcast;
@@ -29,6 +31,7 @@ use super::web_clients::http_client::HttpClient;
 use super::web_clients::websocket::WebSocket;
 use super::Event;
 
+#[derive(Debug)]
 pub struct Connectors {
     client: Client,
     publisher: broadcast::Sender<Event>,
@@ -116,15 +119,21 @@ impl Connectors {
             .await
     }
 
-    pub async fn subscibe_to_symbol(&self, symbol: &stream::SymbolList) -> Result<stream::Symbols> {
+    pub async fn subscibe_to_symbol(
+        &mut self,
+        symbol: stream::SymbolList,
+    ) -> Result<stream::Symbols> {
         self.websocket
-            .subscribe_to_mktdata(&self.client, &symbol)
+            .subscribe_to_mktdata(&self.client, symbol)
             .await
     }
 
-    pub async fn unsubscibe_from_symbol(&self, symbols: &stream::SymbolList) -> Result<stream::Symbols> {
+    pub async fn unsubscibe_from_symbol(
+        &self,
+        symbols: stream::SymbolList,
+    ) -> Result<stream::Symbols> {
         self.websocket
-            .unsubscribe_from_mktdata(&self.client, &symbols)
+            .unsubscribe_from_mktdata(&self.client, symbols)
             .await
     }
 

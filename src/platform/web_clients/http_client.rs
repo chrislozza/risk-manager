@@ -1,4 +1,3 @@
-use apca::api::v2::{asset, order, orders, position, positions};
 use apca::Client;
 use num_decimal::Num;
 use std::collections::HashMap;
@@ -16,9 +15,10 @@ use tracing::error;
 use tracing::info;
 use tracing::warn;
 
-use crate::float_to_num;
+use crate::to_num;
 use tokio_util::sync::CancellationToken;
 
+#[derive(Debug)]
 pub(crate) struct HttpClient {
     shutdown_signal: CancellationToken,
 }
@@ -54,26 +54,4 @@ impl HttpClient {
             thread::sleep(Duration::from_secs(1));
         }
     }
-
-    //    async fn send_post_request<T: http_endpoint::Endpoint<Output = (), Input = T>>(&self, payload: &T) -> Result<T::Output> {
-    //        let mut retry = 5;
-    //        loop {
-    //            match self.client.issue::<T>(payload).await {
-    //                Ok(payload) => payload,
-    //                Err(apca::RequestError::Endpoint(err)) => warn!("Request failed, error: {err}"),
-    //                Err(err) =>
-    //                {
-    //                    self.shutdown_signal.cancel();
-    //                    bail!("Unknown error: {err}, exiting");
-    //                }
-    //
-    //            }
-    //            if retry == 0 {
-    //                bail!("Failed to post order")
-    //            }
-    //            retry -= 1;
-    //            warn!("Retry order posting retries left: {retry}");
-    //            thread::sleep(Duration::from_secs(1));
-    //        }
-    //    }
 }

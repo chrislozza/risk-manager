@@ -9,6 +9,7 @@ use tokio::sync::Mutex;
 use anyhow::bail;
 use anyhow::Result;
 
+use num_decimal::Num;
 use std::vec::Vec;
 
 use tracing::debug; 
@@ -18,22 +19,23 @@ use tracing::error;
 
 use tokio::sync::broadcast;
 use tokio::sync::RwLock;
-use super::Event;
 use tokio_util::sync::CancellationToken;
 
 use super::data::mktorder::MktOrders;
 use super::data::mktposition::MktPositions;
+use super::Event;
+use super::web_clients::Connectors;
 
 pub struct MktData {
     connectors: Arc<Connectors>,
-    snapshots: HashMap<&str, Num>>
+    snapshots: HashMap<String, Num>>
 }
 
 impl MktData {
     pub fn new(connectors: &Arc<Connectors>) -> Self {
         MktData {
             connectors: Arc::clone(connectors),
-            snapshots: HashSet::default()
+            snapshots: HashMap::default()
         }
     }
 
@@ -47,8 +49,8 @@ impl MktData {
         }
         .init(symbol, start_date, end_date, bars::TimeFrame::OneDay);
 
-        let result = self.connectors.get_historical_bars(request).await?;
-        result.bars
+        let result = self.connectors.get_historical_bars(&request).await?;
+        Ok(result.bars)
     }
 
     pub async fn batch_subscribe(&mut self, symbols: Vec<&str>) -> Result<()> {
@@ -61,7 +63,7 @@ impl MktData {
     }
 
     pub async fn subscribe(&mut self, symbol: &str) -> Result<()> {
-        self.batch_subscribe(vec![symbol.clone()]).await
+        self.batch_subscribe(vec![symbol]).await
     }
 
     pub async fn unsubscribe(&mut self, symbol: &str) -> Result<()> {
@@ -69,31 +71,15 @@ impl MktData {
             .connectors
             .unsubscribe_from_stream(vec![symbol.clone()].into())
             .await?;
-        let subscribed = self.subscribed_symbols.write().await;
-        subscribed = symbols;
+        self.snapshots.remove(symbol);
     }
 
-    pub fn get_snapshot(&self) -> Vec<Bar> {
-        return Vec::default()
+    pub fn get_snapshots(&self) -> &HashMap<String, Num> {
+        &self.snapshots
     }
 
     pub fn capture_data(&self, mktdata_update: &stream::Trade) {
         let symbol = mktdata_update.symbol;
-        self.snapshots[symbol] = mktdata_update.trade_price
-    }
-
-    fn build_symbol_list(
-        &self,
-        orders: &MktOrders,
-    ) -> Vec<String> {
-        let mut symbols = Vec::<String>::default();
-        for mktorder in orders.get_orders() {
-            symbols.push(mktorder.get_order().symbol.clone());
-        }
-
-        for mktposition in positions.get_positions() {
-            symbols.push(mktposition.get_position().symbol.clone());
-        }
-        symbols
+        self.snapshots[&symbol] = mktdata_update.trade_price
     }
 }

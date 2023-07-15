@@ -18,7 +18,7 @@ mod mktdata;
 
 use engine::Engine;
 
-use super::events::Event;
+use super::Event;
 use super::events::MktSignal;
 use crate::Settings;
 use tokio_util::sync::CancellationToken;
@@ -37,7 +37,7 @@ impl Platform {
         shutdown_signal: CancellationToken,
     ) -> Result<Self> {
 
-        let engine = Engine::new(settings, key, secret, is_live, shutdown_signal.clone()).await;
+        let engine = Engine::new(settings, key, secret, is_live, shutdown_signal.clone()).await?;
 
         info!("Initialised platform components");
         Ok(Platform {

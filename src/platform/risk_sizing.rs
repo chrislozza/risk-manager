@@ -5,7 +5,7 @@ use ta::{DataItem, Next};
 
 use num_decimal::Num;
 
-use super::MktData;
+use super::mktdata::MktData;
 
 use anyhow::Result;
 
@@ -26,7 +26,7 @@ impl RiskManagement {
     pub async fn get_atr(symbol: &str, mktdata: &MktData) -> Result<Num> {
         let mut indicator = AverageTrueRange::new(14).unwrap();
 
-        let bars = mktdata.get_historical_bars(symbol, 60).await;
+        let bars = mktdata.get_historical_bars(symbol, 60).await?;
         let mut atr: f64 = 0.0;
         for data in &bars {
             if let Ok(di) = DataItem::builder()
@@ -40,6 +40,6 @@ impl RiskManagement {
                 atr = indicator.next(&di);
             }
         }
-        Ok(Num::new((atr * 100.00) as i64, 100))
+        Ok(to_num!(atr))
     }
 }

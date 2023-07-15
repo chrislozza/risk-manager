@@ -1,9 +1,12 @@
 use apca::api::v2::position;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Result;
 use std::fmt;
+
+use super::super::web_clients::Connectors;
 
 #[derive(Debug, Clone)]
 pub struct MktPosition {
@@ -49,7 +52,7 @@ impl fmt::Display for MktPosition {
 
 pub struct MktPositions {
     connectors: Arc<Connectors>,
-    mktpositions: Hashmap<String, MktPosition>,
+    mktpositions: HashMap<String, MktPosition>,
 }
 
 impl MktPositions {
@@ -60,21 +63,21 @@ impl MktPositions {
         }
     }
 
-    pub async fn get_position(&mut self, symbol: &str) -> Result<MktPosition> {
-        self.mktpositions[symbol]
+    pub async fn get_position(&mut self, symbol: &str) -> Result<&MktPosition> {
+        Ok(&self.mktpositions[symbol])
     }
 
-    pub async fn get_positions(&self) -> Result<Vec<MktPosition>> {
-        let positions = Vec::from_iter(self.mktpositions.keys().map(|s| *s));
-        Ok(positions)
+    pub async fn get_positions(&self) -> &HashMap<String, MktPosition> {
+        &self.mktpositions
     }
 
     pub async fn update_positions(&mut self) -> Result<()> {
         let positions = self.connectors.get_positions().await?;
         for position in &positions {
-            let mktposition = MktPosition::new(position, Some("00cl1"));
+            let mktposition = MktPosition::new(position.clone(), Some("00cl1"));
             info!("{mktposition}");
-            self.mktpositions.insert(mktposition.get_position().symbol.clone(), mktposition);
+            self.mktpositions
+                .insert(mktposition.get_position().symbol.clone(), mktposition);
         }
         Ok(())
     }

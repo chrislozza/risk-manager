@@ -1,5 +1,8 @@
 use clap::Parser;
 
+use apca::data::v2::stream::Trade;
+use apca::api::v2::updates::OrderUpdate;
+
 use tracing::debug; 
 use tracing::info; 
 use tracing::warn;
@@ -14,23 +17,25 @@ mod settings;
 mod utils;
 //mod passwords;
 
-use events::Event;
+use events::MktSignal;
 use events::EventPublisher;
 use logging::CloudLogging;
 use platform::Platform;
-use settings::{Config, Settings};
+use settings::Config;
+use settings::Settings;
 
 use tokio::signal;
 use tokio::sync::mpsc;
-use tokio::time::{sleep, Duration};
+use tokio::time::Duration;
+use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 
 use std::env;
 
 #[derive(Debug, Clone)]
 pub enum Event {
-    Trade(stream::Trade),
-    OrderUpdate(updates::OrderUpdate),
+    Trade(Trade),
+    OrderUpdate(OrderUpdate),
     MktSignal(MktSignal),
 }
 

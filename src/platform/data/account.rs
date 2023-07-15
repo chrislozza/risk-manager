@@ -13,6 +13,8 @@ use anyhow::bail;
 use anyhow::Result;
 use tokio::sync::RwLock;
 
+use super::super::web_clients::Connectors;
+
 #[derive(Debug)]
 pub struct AccountDetails {
     connectors: Arc<Connectors>,
@@ -36,7 +38,7 @@ impl fmt::Display for AccountDetails {
 
 impl AccountDetails {
     pub async fn new(connectors: &Arc<Connectors>) -> Result<Self> {
-        let account_details = connector.get_account_details().await?;
+        let account_details = connectors.get_account_details().await?;
         Ok(AccountDetails {
             connectors: Arc::clone(connectors),
             account: account_details,
@@ -48,7 +50,7 @@ impl AccountDetails {
     }
 
     pub async fn update_account(&mut self) -> Result<()> {
-        let details = self.connectors.get_account_details().await?;
+        let account_details = self.connectors.get_account_details().await?;
         self.account = account_details;
         info!("{self}");
         Ok(())
