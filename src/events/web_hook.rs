@@ -16,10 +16,10 @@ use super::Event;
 use super::PortAction;
 use super::Side;
 use super::Source;
-use crate::events::MktSignal;
+use super::MktSignal;
 
 async fn post_event(
-    sender: mpsc::UnboundedSender<Event>,
+    sender: Sender<Event>,
     response::Json(payload): response::Json<HashMap<String, String>>,
 ) -> response::Json<Value> {
     info!("Received post from webhook, payload: {payload:?}");

@@ -13,6 +13,7 @@ use tokio_util::sync::CancellationToken;
 use anyhow::Result;
 use std::collections::HashMap;
 
+use std::pin::pin;
 use super::Event;
 use super::MktSignal;
 use crate::Settings;
@@ -34,16 +35,16 @@ impl GcpPubSub {
         })
     }
 
-    pub async fn run(&self, event_publisher: broadcast::Sender<Event>) -> Result<()> {
+    pub async fn run(&self, event_publisher: Sender<Event>) -> Result<()> {
         info!("PubSub subscribing to {}", &self.subscription_name);
         let subscriber = self.client.subscription(&self.subscription_name);
         //subscribe
         let shutdown_signal = self.shutdown_signal.clone();
-        let sender = event_publisher.clone();
         let _ = tokio::spawn(async move {
+            let sender = pin!(event_publisher);
             let _ = subscriber
                 .receive(
-                    move |message, _ctx| async move {
+                    &|message, _ctx| async move {
                         if let Err(err) = message.ack().await {
                             warn!("Failed to ack gcp message, error: {err}");
                         }

@@ -170,7 +170,7 @@ impl Engine {
     }
 
     pub async fn mktdata_publish(&mut self) -> Result<()> {
-        let snapshots = self.mktdata.get_snapshots();
+        let snapshots = mut self.mktdata.get_snapshots();
         for (symbol, last_price) in snapshots.iter() {
             if !self.locker.should_close(&symbol, &last_price)
                 || self.locker.get_status(&symbol) != LockerStatus::Active
