@@ -6,6 +6,7 @@ use ta::{DataItem, Next};
 use num_decimal::Num;
 
 use super::mktdata::MktData;
+use crate::to_num;
 
 use anyhow::Result;
 

@@ -7,6 +7,8 @@ use std::fmt;
 use std::sync::Arc;
 use std::vec::Vec;
 
+use tracing::info; 
+
 use super::super::web_clients::Connectors;
 
 #[derive(Debug, Clone)]

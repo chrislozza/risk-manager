@@ -16,8 +16,8 @@ use tokio::time::Duration;
 
 use super::Event;
 use super::Settings;
-use pub_sub::GcpPubSub;
-use web_hook::WebHook;
+use super::pub_sub::GcpPubSub;
+use super::web_hook::WebHook;
 
 pub struct EventClients {
     pubsub: GcpPubSub,
@@ -31,7 +31,7 @@ impl EventClients {
         shutdown_signal: CancellationToken,
         settings: Settings,
     ) -> Result<Arc<Mutex<Self>>> {
-        let (publisher, mut subscriber) = broadcast::channel(32);
+        let (publisher, subscriber) = broadcast::channel(32);
         let pubsub = GcpPubSub::new(shutdown_signal.clone(), settings.clone()).await?;
         let webhook = WebHook::new(shutdown_signal).await;
         Ok(Arc::new(Mutex::new(EventClients {
@@ -50,7 +50,7 @@ impl EventClients {
         self.publisher.subscribe()
     }
 
-    pub async fn run(&self) -> Result<()> {
+    pub async fn run(&mut self) -> Result<()> {
         self.pubsub.run(self.publisher.clone()).await;
         self.webhook.run(self.publisher.clone()).await
     }

@@ -25,10 +25,11 @@ use super::data::mktorder::MktOrders;
 use super::data::mktposition::MktPositions;
 use super::Event;
 use super::web_clients::Connectors;
+use crate::to_num;
 
 pub struct MktData {
     connectors: Arc<Connectors>,
-    snapshots: HashMap<String, Num>>
+    snapshots: HashMap<String, Num>
 }
 
 impl MktData {
@@ -53,29 +54,51 @@ impl MktData {
         Ok(result.bars)
     }
 
-    pub async fn batch_subscribe(&mut self, symbols: Vec<&str>) -> Result<()> {
-        let symbols = match self
-            .connectors
-            .subscribe_to_mktdata(symbols)
-            .await?;
-        let subscribed = self.subscribed_symbols.write().await;
-        subscribed = symbols;
+    pub async fn startup(&mut self, positions: Vec<String>, orders: Vec<String>) -> Result<()> {
+        let position_sym = self.batch_subscribe(positions).await?;
+        let order_sym = self.batch_subscribe(orders).await?;
+
+        let symbol_list = vec![position_sym, order_sym];
+        for symbols in symbol_list.iter() {
+            match symbols {
+                stream::Symbols::List(list) => {
+                    for symbol in list.to_vec() {
+                        if !self.snapshots.contains_key(&symbol.to_string()) {
+                            self.snapshots.insert(symbol.to_string(), to_num!(0.0));
+                        }
+                    }
+                    ()
+                },
+                _ => (),
+            }
+        }
+        Ok(())
+    }
+
+    async fn batch_subscribe(&self, symbols: Vec<String>) -> Result<stream::Symbols> {
+        self.connectors
+            .subscribe_to_symbols(symbols.into())
+            .await
     }
 
     pub async fn subscribe(&mut self, symbol: &str) -> Result<()> {
-        self.batch_subscribe(vec![symbol]).await
+        let symbols = vec![symbol.to_string()];
+        let _ = self.batch_subscribe(symbols).await?;
+        self.snapshots.insert(symbol.to_string(), to_num!(0.0));
+        Ok(())
     }
 
     pub async fn unsubscribe(&mut self, symbol: &str) -> Result<()> {
-        let symbols = match self
+        let symbols = self
             .connectors
-            .unsubscribe_from_stream(vec![symbol.clone()].into())
+            .unsubscribe_from_symbols(vec![symbol.to_string()].into())
             .await?;
         self.snapshots.remove(symbol);
+        Ok(())
     }
 
-    pub fn get_snapshots(&self) -> &HashMap<String, Num> {
-        &self.snapshots
+    pub fn get_snapshots(&self) -> HashMap<String, Num> {
+        self.snapshots.clone()
     }
 
     pub fn capture_data(&self, mktdata_update: &stream::Trade) {

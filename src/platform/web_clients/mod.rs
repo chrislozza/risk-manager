@@ -119,8 +119,8 @@ impl Connectors {
             .await
     }
 
-    pub async fn subscibe_to_symbol(
-        &mut self,
+    pub async fn subscribe_to_symbols(
+        &self,
         symbol: stream::SymbolList,
     ) -> Result<stream::Symbols> {
         self.websocket
@@ -128,7 +128,7 @@ impl Connectors {
             .await
     }
 
-    pub async fn unsubscibe_from_symbol(
+    pub async fn unsubscribe_from_symbols(
         &self,
         symbols: stream::SymbolList,
     ) -> Result<stream::Symbols> {

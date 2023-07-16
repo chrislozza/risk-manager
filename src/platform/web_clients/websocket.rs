@@ -92,7 +92,7 @@ impl WebSocket {
     }
 
     pub async fn subscribe_to_mktdata(
-        &mut self,
+        &self,
         client: &Client,
         symbols: stream::SymbolList,
     ) -> Result<stream::Symbols> {
@@ -154,7 +154,9 @@ impl WebSocket {
                 };
                 retries -= 1;
                 if stream.is_done() {
-                    error!("websocket is done, should restart?");
+                    error!("websocket is done, should restart");
+                    shutdown_signal.cancel();
+                    break;
                 }
                 warn!("Number of retries left in mktdata updates {retries}");
                 if retries == 0 {

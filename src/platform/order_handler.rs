@@ -40,26 +40,6 @@ impl OrderHandler {
         self.connectors.subscibe_to_order_updates().await
     }
 
-    //    pub async fn startup(&mut self) -> (HashMap<String, MktPosition>, HashMap<String, MktOrder>) {
-    //        let orders = match self.get_orders().await {
-    //            Ok(val) => val,
-    //            Err(err) => panic!("{err:?}"),
-    //        };
-    //        let positions = match self.get_positions().await {
-    //            Ok(val) => val,
-    //            Err(err) => panic!("{err:?}"),
-    //        };
-    //        if let Err(err) = self.stream_handler.subscribe_to_order_updates().await {
-    //            error!("Failed to subscribe to stream, error: {err:?}");
-    //            panic!("{:?}", err);
-    //        };
-    //        (positions, orders)
-    //    }
-    //
-    //    pub async fn shutdown(&self) {
-    //        info!("Shutdown initiated");
-    //    }
-
     pub async fn create_position(
         &mut self,
         symbol: &str,
@@ -91,11 +71,10 @@ impl OrderHandler {
     }
 
     pub async fn liquidate_position(&self, position: &MktPosition) -> Result<MktOrder> {
-        let symbol = asset::Symbol::Sym(position.get_position().symbol);
-        if let Err(error) = self.connectors.close_position(&symbol).await {}
+        let symbol = asset::Symbol::Sym(position.get_position().symbol.to_string());
         match self.connectors.close_position(&symbol).await {
             Err(error) => {
-                bail!("Failed to liquidate position for symbol {position.symbol}, error={error}")
+                bail!("Failed to liquidate position for symbol {symbol}, error={error}")
             }
             Ok(order) => Ok(MktOrder::new(
                 OrderAction::Liquidate,
@@ -107,8 +86,9 @@ impl OrderHandler {
 
     pub async fn cancel_order(&self, order: &MktOrder) -> Result<()> {
         let id = order.get_order().id;
+        let symbol = &order.get_order().symbol;
         if let Err(error) = self.connectors.cancel_order(&id).await {
-            bail!("Failed to cancel order for symbol {order.symbol}, error={error}")
+            bail!("Failed to cancel order for symbol {symbol}, error={error}")
         }
         Ok(())
     }

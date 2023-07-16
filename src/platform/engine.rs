@@ -20,20 +20,16 @@ use tokio::sync::broadcast;
 use tokio::sync::broadcast::Receiver;
 use tokio_util::sync::CancellationToken;
 
-use super::Settings;
 use crate::to_num;
-
+use super::Settings;
 use super::super::events::MktSignal;
 use super::locker::Locker;
 use super::locker::LockerStatus;
 use super::locker::TransactionType;
 use super::order_handler::OrderHandler;
-use super::AccountDetails;
 use super::Event;
-
 use super::mktdata::MktData;
 use super::web_clients::Connectors;
-
 use super::data::account::AccountDetails;
 use super::data::mktorder::MktOrder;
 use super::data::mktorder::MktOrders;
@@ -170,8 +166,8 @@ impl Engine {
     }
 
     pub async fn mktdata_publish(&mut self) -> Result<()> {
-        let snapshots = mut self.mktdata.get_snapshots();
-        for (symbol, last_price) in snapshots.iter() {
+        let snapshots = self.mktdata.get_snapshots();
+        for (symbol, last_price) in snapshots {
             if !self.locker.should_close(&symbol, &last_price)
                 || self.locker.get_status(&symbol) != LockerStatus::Active
             {
@@ -207,9 +203,9 @@ impl Engine {
 
     async fn handle_cancel_reject(&mut self, order_update: &updates::OrderUpdate) -> Result<()> {
         let symbol = &order_update.order.symbol;
-        let mktorder = match &self.mktorders.get_order(&symbol.clone()).await {
+        let mktorder = match self.mktorders.get_order(symbol).await {
             Ok(order) => order,
-            Err(err) => bail!("Failed to find order for symbol: {symbol.clone()}, error: {err}"),
+            Err(err) => bail!("Failed to find order for symbol: {symbol}, error: {err}"),
         };
 
         match mktorder.get_action() {
@@ -222,10 +218,10 @@ impl Engine {
     }
 
     async fn handle_new(&mut self, order_update: &updates::OrderUpdate) -> Result<()> {
-        let symbol = &order_update.order.symbol;
-        let mktorder = match &self.mktorders.get_order(&symbol).await {
+        let symbol = &order_update.order.symbol.clone();
+        let mktorder = match self.mktorders.get_order(symbol).await {
             Ok(order) => order,
-            Err(err) => bail!("Failed to find order for symbol: {symbol.clone()}, error: {err}"),
+            Err(err) => bail!("Failed to find order for symbol: {symbol}, error: {err}"),
         };
 
         if let OrderAction::Create = mktorder.get_action() {
@@ -241,9 +237,9 @@ impl Engine {
 
     async fn handle_fill(&mut self, order_update: &updates::OrderUpdate) -> Result<()> {
         let symbol = &order_update.order.symbol;
-        let mktorder = match &self.mktorders.get_order(&symbol.clone()).await {
+        let mktorder = match self.mktorders.get_order(symbol).await {
             Ok(order) => order,
-            Err(err) => bail!("Failed to find order for symbol: {symbol.clone()}, error: {err}"),
+            Err(err) => bail!("Failed to find order for symbol: {symbol}, error: {err}"),
         };
 
         match mktorder.get_action() {
@@ -291,18 +287,11 @@ impl Engine {
         self.order_handler.subscribe_to_events().await?;
 
         let mktorders = self.mktorders.get_orders().await;
-        let orders = mktorders
-            .iter()
-            .map(|(s, o)| o.get_order().symbol.as_str())
-            .collect();
-        self.mktdata.batch_subscribe(orders).await?;
+        let orders = mktorders.values().map(|o| o.get_order().symbol.clone()).collect();
 
-        let mktpositions = self.mktpositions.get_positions().await;
-        let positions = mktpositions
-            .iter()
-            .map(|(s, p)| p.get_position().symbol.as_str())
-            .collect();
-        self.mktdata.batch_subscribe(positions).await?;
+        let mktpositions: &HashMap<String, MktPosition> = self.mktpositions.get_positions().await;
+        let positions = mktpositions.values().map(|p| p.get_position().symbol.clone()).collect();
+        self.mktdata.startup(positions, orders).await?;
 
         Ok(self.connectors.get_subscriber())
     }

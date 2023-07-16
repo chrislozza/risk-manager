@@ -41,24 +41,27 @@ impl GcpPubSub {
         //subscribe
         let shutdown_signal = self.shutdown_signal.clone();
         let _ = tokio::spawn(async move {
-            let sender = pin!(event_publisher);
             let _ = subscriber
                 .receive(
-                    &|message, _ctx| async move {
-                        if let Err(err) = message.ack().await {
-                            warn!("Failed to ack gcp message, error: {err}");
-                        }
-                        let data = std::str::from_utf8(&message.message.data)
-                            .unwrap()
-                            .to_string();
-                        let package: HashMap<String, String> = serde_json::from_str(&data).unwrap();
-                        let payload = &package["payload"];
+                    move |message, _ctx| {
+                        let sender = event_publisher.clone();
+                        async move {
+                            if let Err(err) = message.ack().await {
+                                warn!("Failed to ack gcp message, error: {err}");
+                            }
+                            let data = std::str::from_utf8(&message.message.data)
+                                .unwrap()
+                                .to_string();
+                            let package: HashMap<String, String> =
+                                serde_json::from_str(&data).unwrap();
+                            let payload = &package["payload"];
 
-                        if let Ok(event) = serde_json::from_str::<MktSignal>(payload) {
-                            info!("Data pulled from pubsub {event:?}");
-                            let _ = sender.send(Event::MktSignal(event));
-                        } else {
-                            warn!("Failed to parse unknown message");
+                            if let Ok(event) = serde_json::from_str::<MktSignal>(payload) {
+                                info!("Data pulled from pubsub {event:?}");
+                                let _ = sender.send(Event::MktSignal(event));
+                            } else {
+                                warn!("Failed to parse unknown message");
+                            }
                         }
                     },
                     shutdown_signal,
