@@ -72,11 +72,14 @@ impl WebSocket {
                         error!("Error thrown in websocket {err:?}");
                     }
                     _ => {
+                        info!("Do we ever reset the retries - order updates");
                         retries = 5;
                     }
                 };
                 if stream.is_done() {
                     error!("websocket is done, should restart?");
+                    shutdown_signal.cancel();
+                    break;
                 }
                 retries -= 1;
                 warn!("Number of retries left in order updates {retries}");
@@ -126,13 +129,12 @@ impl WebSocket {
                             .map(|data| {
                                 let event = match data {
                                     stream::Data::Trade(data) => Event::Trade(data),
-                                    _ => {
-                                        error!("Unknown error");
-                                        return;
-                                    }
+                                    _ => return
                                 };
                                 match subscriber.send(event) {
-                                    Err(broadcast::error::SendError(data)) => error!("{data:?}"),
+                                    Err(broadcast::error::SendError(data)) => {
+                                        error!("{data:?}")
+                                    },
                                     Ok(_) => (),
                                 }
                             })
