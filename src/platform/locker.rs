@@ -1,17 +1,24 @@
 use std::collections::HashMap;
 use tracing::info;
 
+use std::fmt;
 use crate::to_num;
 
 use num_decimal::Num;
 
 use super::Settings;
 
-#[derive(PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub enum LockerStatus {
     Active,
     Disabled,
     Finished,
+}
+
+impl fmt::Display for LockerStatus  {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -20,6 +27,13 @@ pub enum TransactionType {
     Position,
 }
 
+impl fmt::Display for TransactionType  {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Locker {
     stops: HashMap<String, TrailingStop>,
     settings: Settings,
@@ -96,11 +110,19 @@ impl Locker {
         }
         false
     }
+
+    pub fn print_snapshot(&self) {
+        for stop in self.stops.values() {
+            info!("{}", stop);
+        }
+    }
 }
 
+#[derive(Debug, Clone)]
 struct TrailingStop {
     symbol: String,
     entry_price: Num,
+    current_price: Num,
     trail_pc: Num,
     pivot_points: [(i8, f64, f64); 4],
     high_low: Num,
@@ -109,6 +131,13 @@ struct TrailingStop {
     status: LockerStatus,
     t_type: TransactionType,
 }
+
+impl fmt::Display for TrailingStop {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "symbol[{}], price[{}], stop[{}], zone[{}] status[{}] type[{}]", self.symbol, self.current_price, self.stop_loss_level, self.zone, self.status, self.t_type)
+    }
+}
+
 
 impl TrailingStop {
     fn new(symbol: String, entry_price: Num, trail_pc: Num, t_type: TransactionType) -> Self {
@@ -123,7 +152,8 @@ impl TrailingStop {
         let high_low = entry_price.clone();
         TrailingStop {
             symbol,
-            entry_price,
+            entry_price: entry_price.clone(),
+            current_price: entry_price,
             trail_pc,
             pivot_points,
             high_low,
@@ -135,6 +165,7 @@ impl TrailingStop {
     }
 
     fn price_update(&mut self, current_price: Num) -> Num {
+        self.current_price = current_price.clone();
         let price = current_price.to_f64().unwrap();
         let price_change = price - self.high_low.to_f64().unwrap();
         if price_change <= 0.0 || self.status == LockerStatus::Disabled {

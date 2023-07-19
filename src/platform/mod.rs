@@ -42,13 +42,12 @@ impl Platform {
     }
 
     pub async fn startup(&self) -> Result<()> {
-        self.engine.lock().await.startup().await
+        let result = self.engine.lock().await.startup().await;
+        info!("Startup completed in the platform");
+        result
     }
 
     pub async fn run(&mut self) -> Result<()> {
-        self.startup().await.unwrap();
-        info!("Startup completed in the platform");
-
         let engine = Arc::clone(&self.engine);
         Engine::run(engine, self.shutdown_signal.clone()).await;
         self.engine.lock().await.subscribe_to_events().await

@@ -1,6 +1,7 @@
 use apca::api::v2::updates;
 use apca::data::v2::stream;
 use apca::Client;
+use std::sync::Arc;
 
 use tracing::error;
 use tracing::info;
@@ -43,7 +44,7 @@ impl WebSocket {
         let shutdown_signal = self.shutdown_signal.clone();
         tokio::spawn(async move {
             info!("In task listening for order updates");
-            let mut retries = 5;
+            let mut retries = Arc::new(5);
             loop {
                 match stream
                     .by_ref()
@@ -52,16 +53,21 @@ impl WebSocket {
                         info!("Order Updates {result:?}");
                         result
                             .map(|data| {
+                                let mut retry_count = Arc::clone(&retries);
                                 let updates::OrderUpdate { event, order } = data;
                                 let event =
                                     Event::OrderUpdate(updates::OrderUpdate { event, order });
-                                if let Err(broadcast::error::SendError(val)) =
-                                    subscriber.send(event)
-                                {
-                                    error!("Sending error {val:?}");
+                                match subscriber.send(event) {
+                                    Err(broadcast::error::SendError(error)) => {
+                                        error!("Sending error {error:?}");
+                                    }
+                                    Ok(_) => {
+                                        retry_count = 5.into();
+                                        ()
+                                    }
                                 }
                             })
-                            .map_err(apca::Error::Json)
+                        .map_err(apca::Error::Json)
                     })
                     .await
                 {
@@ -72,8 +78,8 @@ impl WebSocket {
                         error!("Error thrown in websocket {err:?}");
                     }
                     _ => {
-                        info!("Do we ever reset the retries - order updates");
-                        retries = 5;
+                        retries = 5.into();
+                        continue
                     }
                 };
                 if stream.is_done() {
@@ -81,9 +87,9 @@ impl WebSocket {
                     shutdown_signal.cancel();
                     break;
                 }
-                retries -= 1;
+                retries = (*retries - 1).into();
                 warn!("Number of retries left in order updates {retries}");
-                if retries == 0 {
+                if *retries == 0 {
                     shutdown_signal.cancel();
                     break;
                 }
@@ -119,7 +125,7 @@ impl WebSocket {
         let shutdown_signal = self.shutdown_signal.clone();
         tokio::spawn(async move {
             info!("In task listening for mktdata updates");
-            let mut retries = 5;
+            let mut retries = Arc::new(5);
             loop {
                 match stream
                     .by_ref()
@@ -127,6 +133,7 @@ impl WebSocket {
                     .try_for_each(|result| async {
                         result
                             .map(|data| {
+                                let mut retry_count = Arc::clone(&retries);
                                 let event = match data {
                                     stream::Data::Trade(data) => Event::Trade(data),
                                     _ => return
@@ -135,7 +142,10 @@ impl WebSocket {
                                     Err(broadcast::error::SendError(data)) => {
                                         error!("{data:?}")
                                     },
-                                    Ok(_) => (),
+                                    Ok(_) => {
+                                        retry_count = 5.into();
+                                        ()
+                                    }
                                 }
                             })
                             .map_err(apca::Error::Json)
@@ -150,17 +160,18 @@ impl WebSocket {
                         return;
                     }
                     _ => {
-                        retries = 5;
+                        retries = 5.into();
+                        continue
                     }
                 };
-                retries -= 1;
+                retries = (*retries - 1).into();
                 if stream.is_done() {
                     error!("websocket is done, should restart");
                     shutdown_signal.cancel();
                     break;
                 }
                 warn!("Number of retries left in mktdata updates {retries}");
-                if retries == 0 {
+                if *retries == 0 {
                     shutdown_signal.cancel();
                     break;
                 }

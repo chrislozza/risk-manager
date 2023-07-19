@@ -140,8 +140,9 @@ impl Engine {
 
     pub async fn update_status(&mut self) {
         let _ = self.account.update_account().await;
-        let _ = self.mktpositions.update_positions().await;
         let _ = self.mktorders.update_orders().await;
+        let _ = self.mktpositions.update_positions().await;
+        let _ = self.locker.print_snapshot();
     }
 
     async fn size_position(
@@ -314,7 +315,7 @@ impl Engine {
                     event = event_subscriber.recv() => {
                         match event {
                             Ok(Event::OrderUpdate(event)) => {
-                                info!("Found a trade event: {event:?}");
+                                debug!("Found a trade event: {event:?}");
                                 engine.lock().await.order_update(&event).await;
                             },
                             Ok(Event::Trade(event)) => {
@@ -330,7 +331,7 @@ impl Engine {
                     }
                     //smooth market data updates to avoid reacting to spikes
                     _ = mktdata_publish_interval.tick() => {
-                        info!("Publish mktdata snapshots");
+                        debug!("Publish mktdata snapshots");
                         engine.lock().await.mktdata_publish().await;
                     }
                     _ = shutdown_signal.cancelled() => {
