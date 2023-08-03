@@ -3,7 +3,6 @@ use clap::Parser;
 use apca::api::v2::updates::OrderUpdate;
 use apca::data::v2::stream::Trade;
 
-use tracing::debug;
 use tracing::error;
 use tracing::info;
 use tracing::warn;
@@ -59,6 +58,7 @@ async fn main() {
 
     let shutdown_signal = CancellationToken::new();
     let _logger = CloudLogging::new(
+        settings.log_level.clone(),
         settings.gcp_log_name.clone(),
         settings.gcp_project_id.clone(),
         shutdown_signal.clone(),

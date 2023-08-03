@@ -3,6 +3,7 @@
   "gcp_project_id": "gcp-project-id",
   "service_client": "gcp-service-client",
   "gcp_log_name": "gcp-log-name",
+  "log_level": "info",
   "account_type": "paper",
   "database": {
       "name": "manual-trader",

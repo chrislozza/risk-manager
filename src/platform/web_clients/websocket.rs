@@ -63,11 +63,10 @@ impl WebSocket {
                                     }
                                     Ok(_) => {
                                         retry_count = 5.into();
-                                        ()
                                     }
                                 }
                             })
-                        .map_err(apca::Error::Json)
+                            .map_err(apca::Error::Json)
                     })
                     .await
                 {
@@ -79,7 +78,7 @@ impl WebSocket {
                     }
                     _ => {
                         retries = 5.into();
-                        continue
+                        continue;
                     }
                 };
                 if stream.is_done() {
@@ -109,7 +108,7 @@ impl WebSocket {
             .await?;
         let mut data = stream::MarketData::default();
         data.set_trades(symbols);
-        let subscribe = subscription.subscribe(&data).boxed_local().fuse();
+        let subscribe = subscription.subscribe(&data).boxed().fuse();
         // Actually subscribe with the websocket server.
 
         if let Err(error) = stream::drive(subscribe, &mut stream)
@@ -136,15 +135,14 @@ impl WebSocket {
                                 let mut retry_count = Arc::clone(&retries);
                                 let event = match data {
                                     stream::Data::Trade(data) => Event::Trade(data),
-                                    _ => return
+                                    _ => return,
                                 };
                                 match subscriber.send(event) {
                                     Err(broadcast::error::SendError(data)) => {
                                         error!("{data:?}")
-                                    },
+                                    }
                                     Ok(_) => {
                                         retry_count = 5.into();
-                                        ()
                                     }
                                 }
                             })
@@ -153,23 +151,24 @@ impl WebSocket {
                     .await
                 {
                     Err(apca::Error::WebSocket(err)) => {
-                        error!("Error thrown in websocket {err:?}");
+                        error!("Error thrown in websocket {err:?}, forcing a restart");
+                        shutdown_signal.cancel();
+                        Err(())
                     }
                     Err(err) => {
-                        error!("Error thrown in websocket {err:?}");
-                        return;
+                        error!(" Unknown error in mktdata stream: {err:?}");
+                        Err(())
                     }
                     _ => {
                         retries = 5.into();
-                        continue
+                        Ok(())
                     }
                 };
-                retries = (*retries - 1).into();
                 if stream.is_done() {
-                    error!("websocket is done, should restart");
+                    info!("Detected mktdata stream is done");
                     shutdown_signal.cancel();
-                    break;
                 }
+                retries = (*retries - 1).into();
                 warn!("Number of retries left in mktdata updates {retries}");
                 if *retries == 0 {
                     shutdown_signal.cancel();
@@ -192,7 +191,7 @@ impl WebSocket {
         let mut data = stream::MarketData::default();
         data.set_trades(symbols);
 
-        let unsubscribe = subscription.unsubscribe(&data).boxed_local().fuse();
+        let unsubscribe = subscription.unsubscribe(&data).boxed().fuse();
         if let Err(error) = stream::drive(unsubscribe, &mut stream)
             .await
             .unwrap()

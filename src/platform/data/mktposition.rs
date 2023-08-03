@@ -46,8 +46,12 @@ impl fmt::Display for MktPosition {
             self.position.symbol,
             self.strategy,
             self.position.current_price.as_ref().unwrap().round_with(2),
-            self.position.quantity.to_string(),
-            self.position.unrealized_gain_total.as_ref().unwrap()
+            self.position.quantity,
+            self.position
+                .unrealized_gain_total
+                .as_ref()
+                .unwrap()
+                .round_with(2)
         )
     }
 }

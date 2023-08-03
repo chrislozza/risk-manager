@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use tracing::info;
 
-use std::fmt;
 use crate::to_num;
+use std::fmt;
 
 use num_decimal::Num;
 
@@ -15,7 +15,7 @@ pub enum LockerStatus {
     Finished,
 }
 
-impl fmt::Display for LockerStatus  {
+impl fmt::Display for LockerStatus {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:?}", self)
     }
@@ -27,7 +27,7 @@ pub enum TransactionType {
     Position,
 }
 
-impl fmt::Display for TransactionType  {
+impl fmt::Display for TransactionType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:?}", self)
     }
@@ -58,10 +58,20 @@ impl Locker {
         let multiplier = to_num!(strategy_cfg.trailing_size);
         let stop = TrailingStop::new(symbol.clone(), entry_price.clone(), multiplier, t_type);
         if self.stops.contains_key(symbol) {
-            info!("Locker monitoring update symbol: {symbol} entry price: {entry_price} transaction: {t_type:?}");
+            info!(
+                "Locker monitoring update symbol: {} entry price: {} transaction: {:?}",
+                symbol,
+                entry_price.round_with(2),
+                t_type
+            );
             *self.stops.get_mut(symbol).unwrap() = stop;
         } else {
-            info!("Locker monitoring new symbol: {symbol} entry price: {entry_price} transaction: {t_type:?}");
+            info!(
+                "Locker monitoring new symbol: {} entry price: {} transaction: {:?}",
+                symbol,
+                entry_price.round_with(2),
+                t_type
+            );
             self.stops.insert(symbol.clone(), stop);
         }
     }
@@ -134,10 +144,18 @@ struct TrailingStop {
 
 impl fmt::Display for TrailingStop {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "symbol[{}], price[{}], stop[{}], zone[{}] status[{}] type[{}]", self.symbol, self.current_price, self.stop_loss_level, self.zone, self.status, self.t_type)
+        write!(
+            f,
+            "symbol[{}], price[{}], stop[{}], zone[{}] status[{}] type[{}]",
+            self.symbol,
+            self.current_price.round_with(2),
+            self.stop_loss_level.round_with(2),
+            self.zone,
+            self.status,
+            self.t_type
+        )
     }
 }
-
 
 impl TrailingStop {
     fn new(symbol: String, entry_price: Num, trail_pc: Num, t_type: TransactionType) -> Self {

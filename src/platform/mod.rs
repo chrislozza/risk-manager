@@ -49,8 +49,7 @@ impl Platform {
 
     pub async fn run(&mut self) -> Result<()> {
         let engine = Arc::clone(&self.engine);
-        Engine::run(engine, self.shutdown_signal.clone()).await;
-        self.engine.lock().await.subscribe_to_events().await
+        Engine::run(engine, self.shutdown_signal.clone()).await
     }
 
     pub async fn create_position(&mut self, mkt_signal: &MktSignal) -> Result<()> {

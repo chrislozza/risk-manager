@@ -7,6 +7,7 @@ use tokio::time::Duration;
 use tracing::debug;
 use tracing::error;
 use tracing::info;
+use tracing::warn;
 
 use apca::api::v2::updates;
 use apca::data::v2::stream;
@@ -142,7 +143,7 @@ impl Engine {
         let _ = self.account.update_account().await;
         let _ = self.mktorders.update_orders().await;
         let _ = self.mktpositions.update_positions().await;
-        let _ = self.locker.print_snapshot();
+        self.locker.print_snapshot();
     }
 
     async fn size_position(
@@ -188,14 +189,14 @@ impl Engine {
     pub async fn order_update(&mut self, order_update: &updates::OrderUpdate) -> Result<()> {
         match order_update.event {
             updates::OrderStatus::New => {
-                self.handle_new(order_update);
+                self.handle_new(order_update).await;
             }
             updates::OrderStatus::Filled => {
-                self.handle_fill(order_update);
+                self.handle_fill(order_update).await;
                 self.mktpositions.update_positions().await?;
             }
             updates::OrderStatus::Canceled => {
-                self.handle_cancel_reject(order_update);
+                self.handle_cancel_reject(order_update).await;
             }
             _ => info!("Not listening to event {0:?}", order_update.event),
         }
@@ -204,6 +205,7 @@ impl Engine {
 
     async fn handle_cancel_reject(&mut self, order_update: &updates::OrderUpdate) -> Result<()> {
         let symbol = &order_update.order.symbol;
+        info!("In handle new for symbol: {symbol}");
         let mktorder = match self.mktorders.get_order(symbol).await {
             Ok(order) => order,
             Err(err) => bail!("Failed to find order for symbol: {symbol}, error: {err}"),
@@ -220,6 +222,7 @@ impl Engine {
 
     async fn handle_new(&mut self, order_update: &updates::OrderUpdate) -> Result<()> {
         let symbol = &order_update.order.symbol.clone();
+        info!("In handle new for symbol: {symbol}");
         let mktorder = match self.mktorders.get_order(symbol).await {
             Ok(order) => order,
             Err(err) => bail!("Failed to find order for symbol: {symbol}, error: {err}"),
@@ -232,12 +235,19 @@ impl Engine {
                 mktorder.get_strategy(),
                 TransactionType::Order,
             );
+            self.mktdata.subscribe(symbol).await?;
+        } else {
+            warn!(
+                "Didn't add order to locker action: {}",
+                mktorder.get_action()
+            );
         };
         Ok(())
     }
 
     async fn handle_fill(&mut self, order_update: &updates::OrderUpdate) -> Result<()> {
         let symbol = &order_update.order.symbol;
+        info!("In handle new for symbol: {symbol}");
         let mktorder = match self.mktorders.get_order(symbol).await {
             Ok(order) => order,
             Err(err) => bail!("Failed to find order for symbol: {symbol}, error: {err}"),
@@ -308,14 +318,15 @@ impl Engine {
 
     pub async fn run(engine: Arc<Mutex<Engine>>, shutdown_signal: CancellationToken) -> Result<()> {
         let mut event_subscriber = engine.lock().await.get_event_subscriber()?;
-        let mut mktdata_publish_interval = interval(Duration::from_secs(5)); 
+        let mut mktdata_publish_interval = interval(Duration::from_secs(5));
         tokio::spawn(async move {
+            engine.lock().await.subscribe_to_events().await;
             loop {
                 tokio::select!(
                     event = event_subscriber.recv() => {
                         match event {
                             Ok(Event::OrderUpdate(event)) => {
-                                debug!("Found a trade event: {event:?}");
+                                info!("Found a trade event: {event:?}");
                                 engine.lock().await.order_update(&event).await;
                             },
                             Ok(Event::Trade(event)) => {
