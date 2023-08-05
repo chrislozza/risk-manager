@@ -7,14 +7,12 @@ use tracing::error;
 use tracing::info;
 use tracing::warn;
 
-mod db_client;
 mod events;
 mod gcp_client;
 mod logging;
 mod platform;
 mod settings;
 mod utils;
-//mod passwords;
 
 use events::EventPublisher;
 use events::MktSignal;

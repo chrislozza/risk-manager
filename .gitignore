@@ -3,4 +3,4 @@ target/*
 Cargo.lock
 service_client.json
 run.sh
-tools/utils/*
+tools/*

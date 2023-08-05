@@ -1,10 +1,12 @@
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::info;
+use tracing::error;
 
 use anyhow::Result;
 
 mod data;
+mod db_client;
 mod engine;
 mod locker;
 mod mktdata;
@@ -57,6 +59,8 @@ impl Platform {
     }
 
     pub async fn print_status(&self) {
-        self.engine.lock().await.update_status().await
+        if let Err(err) = self.engine.lock().await.update_status().await {
+            error!("Print status failed to complete, error={}", err);
+        }
     }
 }

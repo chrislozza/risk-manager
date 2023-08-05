@@ -1,4 +1,7 @@
-use serde::{Deserialize, Deserializer};
+use serde::Deserializer;
+use serde::Deserialize;
+use std::fmt;
+use std::str::FromStr;
 use tracing::info;
 
 use std::sync::Arc;
@@ -37,10 +40,16 @@ impl<'de> serde::Deserialize<'de> for PortAction {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum Direction {
     Long,
     Short,
+}
+
+impl fmt::Display for Direction {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
 }
 
 impl<'de> serde::Deserialize<'de> for Direction {
@@ -57,7 +66,19 @@ impl<'de> serde::Deserialize<'de> for Direction {
     }
 }
 
-#[derive(Debug, Clone)]
+impl FromStr for Direction {
+    type Err = String;
+
+    fn from_str(val: &str) -> Result<Self, Self::Err> {
+        match val {
+            "Long" => Ok(Direction::Long),
+            "Short" => Ok(Direction::Short),
+            _ => Err(format!("Failed to parse direction, unknown: {}", val)),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub enum Side {
     Buy,
     Sell,

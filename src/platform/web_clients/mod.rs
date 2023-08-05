@@ -85,6 +85,13 @@ impl Connectors {
             .await
     }
 
+    pub async fn get_position(&self, symbol: &str) -> Result<position::Position> {
+        let symbol_exchange: asset::Symbol = asset::Symbol::SymExchg(symbol.to_string(), asset::Exchange::Amex);
+        self.http_client
+            .send_request::<position::Get>(&self.client, &symbol_exchange)
+            .await
+    }
+
     pub async fn get_positions(&self) -> Result<Vec<position::Position>> {
         self.http_client
             .send_request::<positions::Get>(&self.client, &())

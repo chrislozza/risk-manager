@@ -27,6 +27,8 @@ use super::data::mktorder::MktOrders;
 use super::data::mktorder::OrderAction;
 use super::data::mktposition::MktPosition;
 use super::data::mktposition::MktPositions;
+use super::data::Transactions;
+use super::db_client::DBClient;
 use super::locker::Locker;
 use super::locker::LockerStatus;
 use super::locker::TransactionType;
@@ -39,14 +41,16 @@ use super::Settings;
 use crate::to_num;
 
 pub struct Engine {
+    settings: Settings,
     account: AccountDetails,
     mktdata: MktData,
     order_handler: OrderHandler,
     locker: Locker,
     mktpositions: MktPositions,
     mktorders: MktOrders,
+    transactions: Transactions,
     connectors: Arc<Connectors>,
-    settings: Settings,
+    db: Arc<DBClient>,
 }
 
 impl Engine {
@@ -57,46 +61,47 @@ impl Engine {
         is_live: bool,
         shutdown_signal: CancellationToken,
     ) -> Result<Arc<Mutex<Self>>> {
+        let db = DBClient::new(&settings).await?;
         let connectors = Connectors::new(key, secret, is_live, shutdown_signal)?;
         let account = AccountDetails::new(&connectors).await?;
         let order_handler = OrderHandler::new(&connectors);
         let mktdata = MktData::new(&connectors);
-        let mktorders = MktOrders::new(&connectors);
+        let mktorders = MktOrders::new(&connectors, &db);
         let mktpositions = MktPositions::new(&connectors);
-        let locker = Locker::new(settings.clone());
+        let mut locker = Locker::new(&settings, &db);
+        let transactions = Transactions::new(&db, &mut locker).await;
         Ok(Arc::new(Mutex::new(Engine {
+            settings,
             account,
             mktdata,
             order_handler,
             locker,
             mktpositions,
             mktorders,
+            transactions,
             connectors,
-            settings,
+            db,
         })))
     }
 
     pub async fn startup(&mut self) -> Result<()> {
         info!("Downloading orders and positions in engine startup");
-        self.mktorders.update_orders().await?;
-        self.mktpositions.update_positions().await?;
 
-        let mktorders = self.mktorders.get_orders().await;
+        let mktorders = self.mktorders.update_orders().await?;
         for mktorder in mktorders.values() {
-            let order = mktorder.get_order();
-            self.locker.monitor_trade(
-                &order.symbol,
-                &order.limit_price.clone().unwrap(),
+            self.locker.create_new_stop(
+                mktorder.get_symbol(),
+                mktorder.get_limit_price(),
                 mktorder.get_strategy(),
                 TransactionType::Order,
             );
         }
-        let mktpositions = self.mktpositions.get_positions().await;
+
+        let mktpositions = self.mktpositions.update_positions(self.transactions.get_transactions()).await?;
         for mktposition in mktpositions.values() {
-            let position = mktposition.get_position();
-            self.locker.monitor_trade(
-                &position.symbol,
-                &position.average_entry_price,
+            self.locker.create_new_stop(
+                mktposition.get_symbol(),
+                mktposition.get_entry_price(),
                 mktposition.get_strategy(),
                 TransactionType::Position,
             );
@@ -133,17 +138,18 @@ impl Engine {
                 &mkt_signal.strategy,
                 target_price,
                 size,
-                &mkt_signal.side,
+                mkt_signal.side,
+                mkt_signal.direction,
             )
             .await?;
         self.mktorders.add_order(order).await
     }
 
-    pub async fn update_status(&mut self) {
+    pub async fn update_status(&mut self) -> Result<()> {
         let _ = self.account.update_account().await;
         let _ = self.mktorders.update_orders().await;
-        let _ = self.mktpositions.update_positions().await;
-        self.locker.print_snapshot();
+        let positions = self.mktpositions.update_positions(self.transactions.get_transactions()).await?;
+        self.transactions.print_active_transactions(positions.values().cloned().collect(), &mut self.locker).await
     }
 
     async fn size_position(
@@ -176,9 +182,13 @@ impl Engine {
                 return Ok(());
             }
             match self.locker.get_transaction_type(&symbol) {
-                TransactionType::Order => self.handle_cancel(&symbol).await?,
+                TransactionType::Order => {
+                    let order = self.mktorders.get_order(&symbol).await?.clone();
+                    self.handle_cancel(order).await?
+                }
                 TransactionType::Position => {
-                    let order = self.handle_liquidate(&symbol).await?;
+                    let position = self.mktpositions.get_position(&symbol).await?.clone();
+                    let order = self.handle_liquidate(position).await?;
                     self.mktorders.add_order(order);
                 }
             }
@@ -187,29 +197,26 @@ impl Engine {
     }
 
     pub async fn order_update(&mut self, order_update: &updates::OrderUpdate) -> Result<()> {
+        let order = self.mktorders.update_order(&order_update.order).await?;
         match order_update.event {
             updates::OrderStatus::New => {
-                self.handle_new(order_update).await;
+                self.handle_new(order).await;
             }
             updates::OrderStatus::Filled => {
-                self.handle_fill(order_update).await;
-                self.mktpositions.update_positions().await?;
+                self.handle_fill(order).await;
+                self.mktpositions.update_positions(self.transactions.get_transactions()).await?;
             }
             updates::OrderStatus::Canceled => {
-                self.handle_cancel_reject(order_update).await;
+                self.handle_cancel_reject(order).await;
             }
             _ => info!("Not listening to event {0:?}", order_update.event),
         }
         Ok(())
     }
 
-    async fn handle_cancel_reject(&mut self, order_update: &updates::OrderUpdate) -> Result<()> {
-        let symbol = &order_update.order.symbol;
-        info!("In handle new for symbol: {symbol}");
-        let mktorder = match self.mktorders.get_order(symbol).await {
-            Ok(order) => order,
-            Err(err) => bail!("Failed to find order for symbol: {symbol}, error: {err}"),
-        };
+    async fn handle_cancel_reject(&mut self, mktorder: MktOrder) -> Result<()> {
+        let symbol = mktorder.get_symbol();
+        info!("In handle cancel reject for symbol: {}", symbol);
 
         match mktorder.get_action() {
             OrderAction::Create => {
@@ -220,18 +227,14 @@ impl Engine {
         Ok(())
     }
 
-    async fn handle_new(&mut self, order_update: &updates::OrderUpdate) -> Result<()> {
-        let symbol = &order_update.order.symbol.clone();
-        info!("In handle new for symbol: {symbol}");
-        let mktorder = match self.mktorders.get_order(symbol).await {
-            Ok(order) => order,
-            Err(err) => bail!("Failed to find order for symbol: {symbol}, error: {err}"),
-        };
+    async fn handle_new(&mut self, mktorder: MktOrder) -> Result<()> {
+        let symbol = mktorder.get_symbol();
+        info!("In handle new for symbol: {}", symbol);
 
         if let OrderAction::Create = mktorder.get_action() {
-            self.locker.monitor_trade(
-                symbol,
-                order_update.order.limit_price.as_ref().unwrap(),
+            self.locker.create_new_stop(
+                mktorder.get_symbol(),
+                mktorder.get_limit_price(),
                 mktorder.get_strategy(),
                 TransactionType::Order,
             );
@@ -245,46 +248,47 @@ impl Engine {
         Ok(())
     }
 
-    async fn handle_fill(&mut self, order_update: &updates::OrderUpdate) -> Result<()> {
-        let symbol = &order_update.order.symbol;
-        info!("In handle new for symbol: {symbol}");
-        let mktorder = match self.mktorders.get_order(symbol).await {
-            Ok(order) => order,
-            Err(err) => bail!("Failed to find order for symbol: {symbol}, error: {err}"),
-        };
+    async fn handle_fill(&mut self, mktorder: MktOrder) -> Result<()> {
+        let symbol = mktorder.get_symbol();
+        info!("In handle fill for symbol: : {}", symbol);
 
-        match mktorder.get_action() {
+        let _ = match mktorder.get_action() {
             OrderAction::Create => {
-                self.locker.monitor_trade(
-                    &symbol.clone(),
-                    &order_update.order.average_fill_price.clone().unwrap(),
+                let locker_id = self.locker.create_new_stop(
+                    symbol,
+                    mktorder.get_limit_price(),
                     mktorder.get_strategy(),
                     TransactionType::Position,
                 );
+                self.transactions.add_transaction(locker_id, mktorder, &self.db);
             }
             OrderAction::Liquidate => {
                 self.locker.complete(symbol);
                 self.mktdata.unsubscribe(symbol).await;
+                let position = self.mktpositions.update_position(symbol).await?;
+                self.transactions.close_transaction(mktorder, position, &self.db).await?
             }
         };
         Ok(())
     }
 
-    async fn handle_cancel(&mut self, symbol: &str) -> Result<()> {
-        let order = self.mktorders.get_order(symbol).await?;
-        match self.order_handler.cancel_order(order).await {
+    async fn handle_cancel(&mut self, mktorder: MktOrder) -> Result<()> {
+        let symbol = mktorder.get_symbol();
+        info!("In handle new for symbol: {symbol}");
+        match self.order_handler.cancel_order(&mktorder).await {
             Err(error) => {
                 error!("Dropping order cancel, failed to send to server, error={error}");
                 self.locker.update_status(symbol, LockerStatus::Active);
                 bail!("{error}")
             }
-            _ => Ok(()),
+            _ => Ok(())
         }
     }
 
-    async fn handle_liquidate(&mut self, symbol: &str) -> Result<MktOrder> {
-        let position = self.mktpositions.get_position(symbol).await?;
-        match self.order_handler.liquidate_position(position).await {
+    async fn handle_liquidate(&mut self, position: MktPosition) -> Result<MktOrder> {
+        let symbol = position.get_symbol();
+        info!("In handle new for symbol: {symbol}");
+        match self.order_handler.liquidate_position(&position).await {
             Err(error) => {
                 error!("Dropping liquidate, failed to send to server, error={error}");
                 self.locker.update_status(symbol, LockerStatus::Active);
@@ -300,13 +304,13 @@ impl Engine {
         let mktorders = self.mktorders.get_orders().await;
         let orders = mktorders
             .values()
-            .map(|o| o.get_order().symbol.clone())
+            .map(|o| o.get_symbol().to_string())
             .collect();
 
-        let mktpositions: &HashMap<String, MktPosition> = self.mktpositions.get_positions().await;
+        let mktpositions = self.mktpositions.get_positions().await;
         let positions = mktpositions
             .values()
-            .map(|p| p.get_position().symbol.clone())
+            .map(|p| p.get_symbol().to_string())
             .collect();
         self.mktdata.startup(positions, orders).await?;
         Ok(())

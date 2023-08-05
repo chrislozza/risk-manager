@@ -9,6 +9,7 @@ use anyhow::bail;
 use anyhow::Result;
 
 use super::super::events::Side;
+use super::super::events::Direction;
 use super::data::mktorder::MktOrder;
 use super::data::mktorder::OrderAction;
 use super::data::mktposition::MktPosition;
@@ -38,7 +39,8 @@ impl OrderHandler {
         strategy: &str,
         target_price: Num,
         position_size: Num,
-        side: &Side,
+        side: Side,
+        direction: Direction,
     ) -> Result<MktOrder> {
         let limit_price = target_price.clone() * to_num!(1.07);
         let stop_price = target_price * to_num!(1.01);
@@ -58,12 +60,12 @@ impl OrderHandler {
         .init(symbol, side, amount);
         match self.connectors.place_order(&request).await {
             Err(error) => bail!("Failed to place order for request: {request:?}, error: {error}"),
-            Ok(order) => Ok(MktOrder::new(OrderAction::Create, order, Some(strategy))),
+            Ok(order) => Ok(MktOrder::new(OrderAction::Create, order, strategy, symbol, direction)),
         }
     }
 
     pub async fn liquidate_position(&self, position: &MktPosition) -> Result<MktOrder> {
-        let symbol = asset::Symbol::Sym(position.get_position().symbol.to_string());
+        let symbol = asset::Symbol::Sym(position.get_symbol().to_string());
         match self.connectors.close_position(&symbol).await {
             Err(error) => {
                 bail!("Failed to liquidate position for symbol {symbol}, error={error}")
@@ -71,21 +73,23 @@ impl OrderHandler {
             Ok(order) => Ok(MktOrder::new(
                 OrderAction::Liquidate,
                 order,
-                Some(position.get_strategy()),
+                position.get_strategy(),
+                position.get_symbol(),
+                position.get_direction(),
             )),
         }
     }
 
     pub async fn cancel_order(&self, order: &MktOrder) -> Result<()> {
-        let id = order.get_order().id;
-        let symbol = &order.get_order().symbol;
+        let id = order.get_order_id();
+        let symbol = &order.get_symbol();
         if let Err(error) = self.connectors.cancel_order(&id).await {
             bail!("Failed to cancel order for symbol {symbol}, error={error}")
         }
         Ok(())
     }
 
-    fn convert_side(side: &Side) -> apca::api::v2::order::Side {
+    fn convert_side(side: Side) -> apca::api::v2::order::Side {
         match side {
             Side::Buy => apca::api::v2::order::Side::Buy,
             Side::Sell => apca::api::v2::order::Side::Sell,
