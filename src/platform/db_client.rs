@@ -110,10 +110,15 @@ impl DBClient {
         columns: Vec<&str>,
         values: Vec<Box<dyn ToSql + Sync>>,
     ) -> Result<()> {
-        let stmt = self.query_builder.prepare_insert_statement(table, &columns);
-        let values_refs: Vec<&(dyn ToSql + Sync)> =
-            values.iter().map(|boxed| boxed.as_ref()).collect();
-        self.client.execute(&stmt, &values_refs).await?;
+        tokio::spawn(async move {
+            let stmt = self.query_builder.prepare_insert_statement(table, &columns);
+            let values_refs: Vec<&(dyn ToSql + Sync)> =
+                values.iter().map(|boxed| boxed.as_ref()).collect();
+            match self.client.execute(&stmt, &values_refs).await {
+                Err(err) => Err(format!("Failed to execute to db {} ", stmt)),
+                _ => Ok(())
+            }
+        });
         Ok(())
     }
 
@@ -122,11 +127,16 @@ impl DBClient {
         table: &str,
         columns: Vec<&str>,
         values: Vec<Box<dyn ToSql + Sync>>,
-    ) -> Result<()> {
-        let stmt = self.query_builder.prepare_update_statement(table, &columns);
-        let values_refs: Vec<&(dyn ToSql + Sync)> =
-            values.iter().map(|boxed| boxed.as_ref()).collect();
-        self.client.execute(&stmt, &values_refs).await?;
+        ) -> Result<()> {
+        tokio::spawn(async move {
+            let stmt = self.query_builder.prepare_update_statement(table, &columns);
+            let values_refs: Vec<&(dyn ToSql + Sync)> =
+                values.iter().map(|boxed| boxed.as_ref()).collect();
+            match self.client.execute(&stmt, &values_refs).await {
+                Err(err) => Err(format!("Failed to execute to db {} ", stmt)),
+            _ => Ok(())
+            }
+        });
         Ok(())
     }
 
@@ -136,10 +146,16 @@ impl DBClient {
         columns: Vec<&str>,
         values: Vec<Box<dyn ToSql + Sync>>,
     ) -> Result<Vec<Row>> {
-        let stmt = self.query_builder.prepare_fetch_statement(table, &columns);
-        let values_refs: Vec<&(dyn ToSql + Sync)> =
-            values.iter().map(|boxed| boxed.as_ref()).collect();
-        Ok(self.client.query(&stmt, &values_refs).await?)
+        tokio::spawn(async move {
+            let stmt = self.query_builder.prepare_fetch_statement(table, &columns);
+            let values_refs: Vec<&(dyn ToSql + Sync)> =
+                values.iter().map(|boxed| boxed.as_ref()).collect();
+            match self.client.query(&stmt, &values_refs).await {
+                Ok(val) => Ok(val),
+                Err(err) => Err(format!("Failed to execute to db {} ", stmt)),
+            }
+        });
+        Ok(())
     }
 
     pub async fn remove(
@@ -148,10 +164,15 @@ impl DBClient {
         columns: Vec<&str>,
         values: &Vec<Box<dyn ToSql + Sync>>,
     ) -> Result<()> {
-        let stmt = self.query_builder.prepare_delete_statement(table, &columns);
-        let values_refs: Vec<&(dyn ToSql + Sync)> =
-            values.iter().map(|boxed| boxed.as_ref()).collect();
-        self.client.execute(&stmt, &values_refs).await?;
+        tokio::spawn(async move {
+            let stmt = self.query_builder.prepare_delete_statement(table, &columns);
+            let values_refs: Vec<&(dyn ToSql + Sync)> =
+                values.iter().map(|boxed| boxed.as_ref()).collect();
+            match self.client.execute(&stmt, &values_refs).await {
+                Err(err) => bail!("Failed to execute to db {} ", stmt),
+                _ => ()
+            }
+        });
         Ok(())
     }
 }

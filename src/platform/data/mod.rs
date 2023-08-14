@@ -138,15 +138,18 @@ impl Transaction {
         self.write_to_db(db).await
     }
 
-//    async fn write_to_db(&self, db: &Arc<DBClient>) -> Result<()> {
-//        let (columns, values) = self.serialise();
-//        if let Err(err) = db.update("transaction", columns, values).await {
-//            bail!("Failed to write to db in transaction");
-//        }
-//        Ok(())
-//    }
-
     async fn write_to_db(&self, db: &Arc<DBClient>) -> Result<()> {
+        let (columns, values) = self.serialise()?;
+        tokio::spawn(async move {
+            if let Err(err) = db.clone().update("transaction", columns, values).await {
+                bail!("Failed to write to db in transaction");
+            }
+            Ok(())
+        });
+        Ok(())
+    }
+
+    fn serialise(&self) -> Result<(Vec<&str>, Vec<Box<dyn ToSql + Sync>>)> {
         let exit_time = match self.exit_time {
             Some(val) => val,
             None => SystemTime::now().into()
@@ -155,7 +158,7 @@ impl Transaction {
             Some(val) => val.round_with(3).to_f64().unwrap(),
             None => 0.0,
         };
-        let columns = vec![
+        Ok((vec![
             "strategy",
             "symbol",
             "locker",
@@ -170,8 +173,8 @@ impl Transaction {
             "direction",
             "status",
             "local_id",
-        ];
-        let values = vec![
+        ],
+        vec![
             to_sql_type(self.strategy.clone()),
             to_sql_type(self.symbol.clone()),
             to_sql_type(self.locker),
@@ -186,11 +189,7 @@ impl Transaction {
             to_sql_type(self.direction.to_string()),
             to_sql_type(self.status.to_string()),
             to_sql_type(self.local_id),
-        ];
-        if let Err(err) = db.update("transaction", columns, values).await {
-            bail!("Failed to write to db in transaction");
-        }
-        Ok(())
+        ]))
     }
 }
 
