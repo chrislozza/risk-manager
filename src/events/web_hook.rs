@@ -68,20 +68,20 @@ impl WebHook {
     }
 
     pub async fn run(&mut self, sender: Sender<Event>) -> Result<()> {
-        let app = Router::new()
-            .route(
-                "/v1/mktsignal",
-                routing::post(move |body| post_event(sender, body)),
-            )
-            .layer(CorsLayer::permissive());
+        // let app = Router::new()
+        //     .route(
+        //         "/v1/mktsignal",
+        //         routing::post(move |body| post_event(sender, body)),
+        //     )
+        //     .layer(CorsLayer::permissive());
 
-        let server =
-            axum::Server::bind(&"0.0.0.0:496".parse().unwrap()).serve(app.into_make_service());
+        // let server =
+        //     axum::Server::bind(&"0.0.0.0:496".parse().unwrap()).serve(app.into_make_service());
 
-        let cancel_request = self.shutdown_signal.clone();
-        server.with_graceful_shutdown(async {
-            cancel_request.cancelled().await;
-        });
+        // let cancel_request = self.shutdown_signal.clone();
+        // server.with_graceful_shutdown(async {
+        //     cancel_request.cancelled().await;
+        // });
 
         Ok(())
     }

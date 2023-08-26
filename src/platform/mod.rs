@@ -6,9 +6,7 @@ use tracing::error;
 use anyhow::Result;
 
 mod data;
-mod db_client;
 mod engine;
-mod locker;
 mod mktdata;
 mod order_handler;
 mod risk_sizing;

@@ -3,6 +3,8 @@ use clap::Parser;
 use apca::api::v2::updates::OrderUpdate;
 use apca::data::v2::stream::Trade;
 
+use tokio::sync::broadcast::error::RecvError;
+
 use tracing::error;
 use tracing::info;
 use tracing::warn;
@@ -77,8 +79,8 @@ async fn main() {
 
     info!("Starting trading app");
 
-    let key = env::var("KEY").expect("Failed to read the 'key' environment variable.");
-    let secret = env::var("SECRET").expect("Failed to read the 'secret' environment variable.");
+    let key = env::var("API_KEY").expect("Failed to read the 'key' environment variable.");
+    let secret = env::var("API_SECRET").expect("Failed to read the 'secret' environment variable.");
 
     info!("Found key: {key}, secret: {secret}");
 
@@ -116,10 +118,18 @@ async fn main() {
     loop {
         tokio::select! {
             event = publisher_events.recv() => {
-                if let Event::MktSignal(event) = event.unwrap() {
+                match event {
+                    Ok(Event::MktSignal(event)) => {
                     info!("Recieved an event {event:?}, creating new position");
                     if let Err(err) = platform.create_position(&event).await {
                         warn!("Signal dropped {event:?}, error: {err}");
+                    }
+                },
+                    Ok(_) => (),
+                    Err(RecvError::Lagged(err)) => warn!("Publisher channel skipping a number of messages: {}", err),
+                    Err(RecvError::Closed) => {
+                        error!("Publisher channel closed");
+                        shutdown_signal.cancel()
                     }
                 }
             }

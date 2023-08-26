@@ -15,8 +15,8 @@ RUN chmod -R +rx /root
 ARG key
 ARG secret
 
-ENV KEY $key
-ENV SECRET $secret
+ENV API_KEY $key
+ENV API_SECRET $secret
 ENV GOOGLE_APPLICATION_CREDENTIALS="/root/.ssh/service_client.json"
 
 #CMD [ "sleep", "infinity" ]

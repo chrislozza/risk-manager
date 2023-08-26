@@ -6,11 +6,11 @@
   "log_level": "info",
   "account_type": "paper",
   "database": {
-      "db_name": "manual-trader",
-      "user": "trader",
-      "port": 5433,
-      "host": "gcp-sql-host",
-      "password": "xxxx"
+    "name": "manual-trader",
+    "user": "trader",
+    "port": 5433,
+    "host": "gcp-sql-host",
+    "password": "xxxx"
   },
   "strategies": {
     "risk_tolerance": 0.02,
@@ -28,4 +28,3 @@
     }
   }
 }
-

@@ -44,7 +44,7 @@ impl EventClients {
     }
 
     pub async fn run(&mut self) -> Result<()> {
-        self.pubsub.run(self.publisher.clone()).await;
+        let _ = self.pubsub.run(self.publisher.clone()).await;
         self.webhook.run(self.publisher.clone()).await
     }
 }

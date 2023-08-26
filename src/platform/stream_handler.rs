@@ -209,6 +209,7 @@ impl WebSocket {
             .unwrap()
             .unwrap()
         {
+            error!("Unsubscribe error in the stream drive: {error:?}");
             self.shutdown_signal.cancel();
             bail!("Unsubscribe error in the stream drive: {error:?}");
         }

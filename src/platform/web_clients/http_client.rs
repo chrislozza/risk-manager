@@ -7,6 +7,7 @@ use anyhow::bail;
 use anyhow::Result;
 use http_endpoint::Endpoint;
 
+use tracing::error;
 use tracing::warn;
 
 use tokio_util::sync::CancellationToken;
@@ -27,20 +28,21 @@ impl HttpClient {
     {
         let mut retry = 5;
         loop {
-            let _ = match client.issue::<E>(input).await {
+            match client.issue::<E>(input).await {
                 Err(apca::RequestError::Endpoint(err)) => {
                     warn!("Request failed, error: {err}");
-                    anyhow::anyhow!("request failed, trying again...")
                 }
                 Err(err) => {
+                    error!("Request error={}", err);
                     self.shutdown_signal.cancel();
                     bail!("Unknown error: {err}, exiting");
                 }
                 Ok(payload) => return Ok(payload),
             };
             if retry == 0 {
+                error!("Failed to post order");
                 self.shutdown_signal.cancel();
-                bail!("Failed to post order")
+                bail!("Failure in http request")
             }
             retry -= 1;
             warn!("Retry order posting retries left: {retry}");

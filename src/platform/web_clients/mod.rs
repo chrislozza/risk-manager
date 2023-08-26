@@ -9,10 +9,12 @@ use apca::data::v2::bars;
 use apca::data::v2::stream;
 use apca::ApiInfo;
 use apca::Client;
+use apca::api::v2::order::Id;
 
 use anyhow::Result;
 use std::sync::Arc;
 use url::Url;
+use uuid::Uuid;
 
 use tokio::sync::broadcast;
 
@@ -78,6 +80,13 @@ impl Connectors {
             .await
     }
 
+    pub async fn get_order(&self, order_id: Uuid) -> Result<order::Order> {
+        let _request = orders::OrdersReq::default();
+        self.http_client
+            .send_request::<order::Get>(&self.client, &Id(order_id))
+            .await
+    }
+
     pub async fn get_orders(&self) -> Result<Vec<order::Order>> {
         let request = orders::OrdersReq::default();
         self.http_client
@@ -86,7 +95,8 @@ impl Connectors {
     }
 
     pub async fn get_position(&self, symbol: &str) -> Result<position::Position> {
-        let symbol_exchange: asset::Symbol = asset::Symbol::SymExchg(symbol.to_string(), asset::Exchange::Amex);
+        let symbol_exchange: asset::Symbol =
+            asset::Symbol::SymExchg(symbol.to_string(), asset::Exchange::Amex);
         self.http_client
             .send_request::<position::Get>(&self.client, &symbol_exchange)
             .await

@@ -116,8 +116,9 @@ impl WebSocket {
             .unwrap()
             .unwrap()
         {
+            error!("Subscribe error in the stream drive: {error:?}");
             self.shutdown_signal.cancel();
-            bail!("Subscribe error in the stream drive: {error:?}");
+            bail!("Oops")
         }
 
         let subscriber = self.event_publisher.clone();
@@ -197,8 +198,8 @@ impl WebSocket {
             .unwrap()
             .unwrap()
         {
+            error!("Unsubscribe error in the stream drive: {error:?}");
             self.shutdown_signal.cancel();
-            bail!("Unsubscribe error in the stream drive: {error:?}");
         }
 
         Ok(subscription.subscriptions().trades.clone())

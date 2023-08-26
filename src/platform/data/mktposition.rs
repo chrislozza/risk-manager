@@ -4,13 +4,13 @@ use num_decimal::Num;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use anyhow::Result;
 use anyhow::bail;
+use anyhow::Result;
 use std::fmt;
 
-use tracing::info;
 
-use super::Transaction;
+
+
 use crate::events::Direction;
 use crate::to_num;
 
@@ -20,12 +20,16 @@ use super::super::web_clients::Connectors;
 pub struct MktPosition {
     position: position::Position,
     strategy: String,
-    direction: Direction
+    direction: Direction,
 }
 
 impl MktPosition {
     pub fn new(position: position::Position, strategy: &str, direction: Direction) -> Self {
-        MktPosition { position, strategy: strategy.into(), direction}
+        MktPosition {
+            position,
+            strategy: strategy.into(),
+            direction,
+        }
     }
 
     pub fn update_inner(&mut self, position: position::Position) -> &Self {
@@ -42,7 +46,7 @@ impl MktPosition {
     }
 
     pub fn get_entry_price(&self) -> Num {
-        self.position.average_entry_price
+        self.position.average_entry_price.clone()
     }
 
     pub fn get_symbol(&self) -> &str {
@@ -50,13 +54,13 @@ impl MktPosition {
     }
 
     pub fn get_cost_basis(&self) -> Num {
-        self.position.cost_basis
+        self.position.cost_basis.clone()
     }
 
     pub fn get_pnl(&self) -> Num {
-        match self.position.unrealized_gain_total {
+        match self.position.unrealized_gain_total.clone() {
             Some(val) => val,
-            None => to_num!(0.0)
+            None => to_num!(0.0),
         }
     }
 }
@@ -105,20 +109,24 @@ impl MktPositions {
         }
     }
 
-
     pub async fn get_positions(&self) -> &HashMap<String, MktPosition> {
         &self.mktpositions
     }
 
-
-    pub async fn update_positions(&mut self, transactions: &HashMap<String, Transaction>) -> Result<HashMap<String, MktPosition>> {
-        let positions = self.connectors.get_positions().await?;
+    pub async fn update_positions(
+        &mut self,
+    ) -> Result<HashMap<String, MktPosition>> {
+/*         let positions = self.connectors.get_positions().await?;
         for position in &positions {
             let transaction = &transactions[&position.symbol];
-            let mktposition = MktPosition::new(position.clone(), &transaction.strategy, transaction.direction);
+            let mktposition = MktPosition::new(
+                position.clone(),
+                &transaction.strategy,
+                transaction.direction,
+            );
             self.mktpositions
                 .insert(mktposition.get_symbol().to_string(), mktposition);
-        }
+        } */
         Ok(self.mktpositions.clone())
     }
 }

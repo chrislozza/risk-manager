@@ -20,7 +20,7 @@ pub struct Settings {
 
 #[derive(Default, Clone, Debug, Deserialize)]
 pub struct DatabaseConfig {
-    pub db_name: String,
+    pub name: String,
     pub port: u16,
     pub host: String,
     pub user: String,

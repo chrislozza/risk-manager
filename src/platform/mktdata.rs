@@ -47,12 +47,10 @@ impl MktData {
         Ok(result.bars)
     }
 
-    pub async fn startup(&mut self, positions: Vec<String>, orders: Vec<String>) -> Result<()> {
-        let position_sym = self.batch_subscribe(positions).await?;
-        let order_sym = self.batch_subscribe(orders).await?;
+    pub async fn startup(&mut self, symbols: Vec<String>) -> Result<()> {
+        if !symbols.is_empty() {
+            let symbols = self.batch_subscribe(symbols).await?;
 
-        let symbol_list = vec![position_sym, order_sym];
-        for symbols in symbol_list.iter() {
             if let stream::Symbols::List(list) = symbols {
                 for symbol in list.to_vec() {
                     self.snapshots
@@ -61,6 +59,7 @@ impl MktData {
                 }
             }
         }
+        info!("Mktdata startup complete");
         Ok(())
     }
 

@@ -1,27 +1,25 @@
+use anyhow::Ok;
 use apca::api::v2::order;
 
-use std::str::FromStr;
+use anyhow::bail;
+use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
-use anyhow::Result;
-use anyhow::bail;
 use num_decimal::Num;
 use std::collections::HashMap;
+
 use std::fmt;
+use std::str::FromStr;
 use std::sync::Arc;
-use tokio_postgres::types::ToSql;
-use crate::utils::to_sql_type;
-use tokio_postgres::Row;
+
 use uuid::Uuid;
 
-use tracing::info;
-
-use super::DBClient;
+use super::db_client::DBClient;
+use crate::events::Direction;
 use crate::platform::web_clients::Connectors;
 use crate::to_num;
-use crate::events::Direction;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum OrderAction {
     Create,
     Liquidate,
@@ -36,70 +34,103 @@ impl fmt::Display for OrderAction {
 impl FromStr for OrderAction {
     type Err = String;
 
-    fn from_str(val: &str) -> Result<Self, Self::Err> {
+    fn from_str(val: &str) -> std::result::Result<Self, Self::Err> {
         match val {
-            "Active" => Ok(OrderAction::Create),
-            "Closed" => Ok(OrderAction::Liquidate),
-            _ => Err(format!(
-                "Failed to parse order action, unknown: {}",
-                val
-            )),
+            "Active" => std::result::Result::Ok(OrderAction::Create),
+            "Closed" => std::result::Result::Ok(OrderAction::Liquidate),
+            _ => Err(format!("Failed to parse order action, unknown: {}", val)),
         }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct MktOrder {
-    local_id: Uuid,
-    action: OrderAction,
-    order: order::Order,
-    strategy: String,
-    symbol: String,
-    direction: Direction,
-    fill_price: Option<Num>,
-    fill_time: Option<DateTime<Utc>>
+    pub local_id: Option<Uuid>,
+    pub order_id: Uuid,
+    pub order: Option<order::Order>,
+    pub strategy: String,
+    pub symbol: String,
+    pub direction: Direction,
+    pub action: OrderAction,
+    pub fill_price: Num,
+    pub fill_time: DateTime<Utc>,
+    pub quantity: Num,
 }
 
 impl MktOrder {
-    pub fn new(action: OrderAction, order: order::Order, strategy: &str, symbol: &str, direction: Direction) -> Self {
-        MktOrder {
-            local_id: order.id.0,
-            action,
-            order,
+    pub async fn new(
+        action: OrderAction,
+        order_id: Uuid,
+        strategy: &str,
+        symbol: &str,
+        direction: Direction,
+        db: &Arc<DBClient>,
+    ) -> Result<Self> {
+        let mut order = MktOrder {
+            local_id: None,
+            order_id,
+            order: None,
             strategy: strategy.to_string(),
             symbol: symbol.to_string(),
             direction,
-            fill_price: None,
-            fill_time: None
-        }
-    }
-
-    fn load_from_db(row: &Row, order: &order::Order) -> Self {
-        let local_id = row.get::<&str, Uuid>("local_id");
-        let strategy = row.get::<&str, String>("strategy");
-        let symbol = row.get::<&str, String>("symbol");
-        let action = OrderAction::from_str(row.get::<&str, &str>("action")).unwrap();
-        let direction = Direction::from_str(row.get::<&str, &str>("direction")).unwrap();
-
-        MktOrder {
-            local_id,
             action,
-            order: order.clone(),
-            strategy,
-            symbol,
-            direction,
-            fill_price: None,
-            fill_time: None
-        }
+            fill_price: to_num!(0.0),
+            fill_time: DateTime::<Utc>::default(),
+            quantity: Num::from(0_i32),
+        };
+        order.persist_db(db.clone()).await?;
+        Ok(order)
     }
 
-    fn update_inner(&mut self, order: &order::Order)-> &Self {
-        self.order = order.clone();
+    async fn persist_db(&mut self, db: Arc<DBClient>) -> Result<()> {
+        let columns = vec![
+            "action",
+            "order_id",
+            "strategy",
+            "symbol",
+            "direction",
+            "fill_price",
+            "fill_time",
+            "quantity",
+            "local_id",
+        ];
+
+        let stmt = match self.local_id {
+            Some(_) => db
+                .query_builder
+                .prepare_update_statement("mktorder", &columns),
+            None => {
+                self.local_id = Some(Uuid::new_v4());
+                db.query_builder
+                    .prepare_insert_statement("mktorder", &columns)
+            }
+        };
+
+        if let Err(err) = sqlx::query(&stmt)
+            .bind(self.action.to_string())
+            .bind(self.order_id)
+            .bind(self.strategy.to_string())
+            .bind(self.symbol.to_string())
+            .bind(self.direction.to_string())
+            .bind(self.fill_price.round_with(3).to_f64())
+            .bind(self.fill_time)
+            .bind(self.quantity.to_i64())
+            .bind(self.local_id)
+            .fetch_one(&db.pool)
+            .await
+        {
+            bail!("Failed to publish to db, error={}", err)
+        }
+        Ok(())
+    }
+
+    fn update_inner(&mut self, order: order::Order) -> &Self {
+        self.order = Some(order);
         self
     }
 
-    pub fn get_order_id(&self) -> order::Id {
-        self.order.id
+    pub fn get_order_id(&self) -> Uuid {
+        self.order.as_ref().unwrap().id.0
     }
 
     pub fn get_action(&self) -> OrderAction {
@@ -111,28 +142,31 @@ impl MktOrder {
     }
 
     pub fn get_limit_price(&self) -> Num {
-        match self.order.limit_price {
-            Some(val) => val,
-            None => panic!("Failed to pull limit price from order")
+        if let Some(order) = &self.order {
+            return order.limit_price.as_ref().unwrap().clone();
         }
+        panic!("Failed to pull limit price from order")
     }
 
     pub fn get_fill_price(&self) -> Num {
-        match self.order.average_fill_price.clone() {
-            Some(val) => val,
-            None => to_num!(0.0)
+        if let Some(order) = &self.order {
+            return order.average_fill_price.as_ref().unwrap().clone();
         }
+        to_num!(0.0)
     }
 
     pub fn get_quantity(&self) -> Num {
-        self.order.filled_quantity.clone()
+        if let Some(order) = &self.order {
+            return order.filled_quantity.clone();
+        }
+        panic!("Failed to pull limit price from order")
     }
 
     pub fn get_fill_time(&self) -> DateTime<Utc> {
-        match self.order.filled_at.clone() {
-            Some(val) => val,
-            None => panic!("Order fill not complete yet for entry time request")
+        if let Some(order) = &self.order {
+            return order.filled_at.unwrap();
         }
+        panic!("Order fill not complete yet for entry time request")
     }
 
     pub fn get_symbol(&self) -> &str {
@@ -144,25 +178,34 @@ impl MktOrder {
     }
 
     pub fn market_value(&self) -> Num {
-        let market_value = match &self.order.amount {
-            order::Amount::Quantity { quantity } => quantity.clone(),
-            _ => Num::from(0),
-        };
-        return market_value * self.order.average_fill_price.as_ref().unwrap();
+        if let Some(order) = &self.order {
+            let market_value = match &order.amount {
+                order::Amount::Quantity { quantity } => quantity.clone(),
+                _ => Num::from(0),
+            };
+            return market_value * order.average_fill_price.as_ref().unwrap();
+        }
+        panic!("Order fill not complete yet for entry time request")
     }
 }
 
 impl fmt::Display for MktOrder {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let quantity = match self.order.amount.clone() {
+        let quantity = match self.order.as_ref().unwrap().amount.clone() {
             order::Amount::Quantity { quantity } => quantity,
             _ => Num::from(0),
         };
         write!(
             f,
             "Order symbol[{}], limitPrice[{}], size[{}] status[{}]",
-            self.order.symbol,
-            self.order.limit_price.as_ref().unwrap().round_with(3),
+            self.symbol,
+            self.order
+                .as_ref()
+                .unwrap()
+                .limit_price
+                .as_ref()
+                .unwrap()
+                .round_with(3),
             quantity.round(),
             self.action
         )
@@ -171,8 +214,8 @@ impl fmt::Display for MktOrder {
 
 pub struct MktOrders {
     connectors: Arc<Connectors>,
-    mktorders: HashMap<String, MktOrder>,
-    db: Arc<DBClient>
+    mktorders: HashMap<Uuid, MktOrder>,
+    db: Arc<DBClient>,
 }
 
 impl MktOrders {
@@ -184,39 +227,35 @@ impl MktOrders {
         }
     }
 
-    pub async fn add_order(&mut self, order: MktOrder) -> Result<()> {
-        self.mktorders
-            .insert(order.get_symbol().to_string(), order);
+    pub async fn add_order(&mut self, order_id: Uuid, order: MktOrder) -> Result<()> {
+        self.mktorders.insert(order_id, order);
         Ok(())
     }
 
-    pub async fn update_order(&mut self, order: &order::Order) -> Result<MktOrder> {
-        if let Some(mktorder) = self.mktorders.get_mut(&order.symbol) {
-            Ok(mktorder.update_inner(order).clone())
+    pub async fn update_order(&mut self, order_id: &Uuid) -> Result<MktOrder> {
+        let order = self.connectors.get_order(*order_id).await?;
+        if let Some(mktorder) = self.mktorders.get_mut(&order.id.0) {
+            mktorder.update_inner(order);
+            Ok(mktorder.clone())
         } else {
             bail!("MktOrder key not found in HashMap")
         }
     }
 
-    pub async fn get_order(&mut self, symbol: &str) -> Result<&MktOrder> {
-        Ok(&self.mktorders[symbol])
+    pub async fn get_order(&self, order_id: &Uuid) -> Result<&MktOrder> {
+        Ok(&self.mktorders[order_id])
     }
 
-    pub async fn get_orders(&self) -> &HashMap<String, MktOrder> {
+    pub async fn get_orders(&self) -> &HashMap<Uuid, MktOrder> {
         &self.mktorders
     }
 
-    pub async fn update_orders(&mut self) -> Result<&HashMap<String, MktOrder>> {
+    pub async fn update_orders(&mut self) -> Result<&HashMap<Uuid, MktOrder>> {
         let orders = self.connectors.get_orders().await?;
         for order in &orders {
-            let rows = match self.db.fetch("order", vec!["local_id"], vec![to_sql_type((order.id).0)]).await {
-                Ok(val) => val,
-                Err(err) => panic!("Failed to fetch order from db with id: {}, closing app", order.id.to_string()),
-            };
-            let mktorder = MktOrder::load_from_db(&rows[0], &order);
-            info!("{mktorder}");
-            self.mktorders
-                .insert(mktorder.get_symbol().to_string(), mktorder);
+            if let Some(mktorder) = self.mktorders.get_mut(&order.id.0) {
+                mktorder.update_inner(order.clone());
+            }
         }
         Ok(&self.mktorders)
     }
