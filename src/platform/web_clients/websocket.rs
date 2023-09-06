@@ -138,14 +138,14 @@ impl WebSocket {
                                     stream::Data::Trade(data) => Event::Trade(data),
                                     _ => return,
                                 };
-                                match subscriber.send(event) {
+                                let _ = match subscriber.send(event) {
                                     Err(broadcast::error::SendError(data)) => {
                                         error!("{data:?}")
                                     }
                                     Ok(_) => {
                                         retry_count = 5.into();
                                     }
-                                }
+                                };
                             })
                             .map_err(apca::Error::Json)
                     })
@@ -154,15 +154,12 @@ impl WebSocket {
                     Err(apca::Error::WebSocket(err)) => {
                         error!("Error thrown in websocket {err:?}, forcing a restart");
                         shutdown_signal.cancel();
-                        Err(())
                     }
                     Err(err) => {
                         error!(" Unknown error in mktdata stream: {err:?}");
-                        Err(())
                     }
                     _ => {
                         retries = 5.into();
-                        Ok(())
                     }
                 };
                 if stream.is_done() {

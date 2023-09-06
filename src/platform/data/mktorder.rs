@@ -45,7 +45,7 @@ impl FromStr for OrderAction {
 
 #[derive(Debug, Clone)]
 pub struct MktOrder {
-    pub local_id: Option<Uuid>,
+    pub local_id: Uuid,
     pub order_id: Uuid,
     pub order: Option<order::Order>,
     pub strategy: String,
@@ -59,16 +59,16 @@ pub struct MktOrder {
 
 impl MktOrder {
     pub async fn new(
-        action: OrderAction,
         order_id: Uuid,
+        action: OrderAction,
         strategy: &str,
         symbol: &str,
         direction: Direction,
         db: &Arc<DBClient>,
     ) -> Result<Self> {
         let mut order = MktOrder {
-            local_id: None,
-            order_id,
+            local_id: Uuid::default(),
+            order_id: order_id,
             order: None,
             strategy: strategy.to_string(),
             symbol: symbol.to_string(),
@@ -95,16 +95,17 @@ impl MktOrder {
             "local_id",
         ];
 
-        let stmt = match self.local_id {
-            Some(_) => db
+        let mut stmt = String::default();
+        if Uuid::is_nil(&self.local_id) {
+            self.local_id = Uuid::new_v4();
+            stmt = db
                 .query_builder
-                .prepare_update_statement("mktorder", &columns),
-            None => {
-                self.local_id = Some(Uuid::new_v4());
-                db.query_builder
-                    .prepare_insert_statement("mktorder", &columns)
-            }
-        };
+                .prepare_insert_statement("mktorder", &columns);
+        } else {
+            stmt = db
+                .query_builder
+                .prepare_update_statement("mktorder", &columns);
+        }
 
         if let Err(err) = sqlx::query(&stmt)
             .bind(self.action.to_string())
@@ -116,7 +117,7 @@ impl MktOrder {
             .bind(self.fill_time)
             .bind(self.quantity.to_i64())
             .bind(self.local_id)
-            .fetch_one(&db.pool)
+            .execute(&db.pool)
             .await
         {
             bail!("Failed to publish to db, error={}", err)
@@ -149,10 +150,13 @@ impl MktOrder {
     }
 
     pub fn get_fill_price(&self) -> Num {
+        let fill_price = to_num!(0.0);
         if let Some(order) = &self.order {
-            return order.average_fill_price.as_ref().unwrap().clone();
+            if let Some(price) = &order.average_fill_price {
+                return price.clone();
+            }
         }
-        to_num!(0.0)
+        fill_price
     }
 
     pub fn get_quantity(&self) -> Num {
@@ -163,10 +167,13 @@ impl MktOrder {
     }
 
     pub fn get_fill_time(&self) -> DateTime<Utc> {
+        let mut fill_time = DateTime::<Utc>::default();
         if let Some(order) = &self.order {
-            return order.filled_at.unwrap();
+            if let Some(timestamp) = &order.filled_at {
+                fill_time = timestamp.clone();
+            }
         }
-        panic!("Order fill not complete yet for entry time request")
+        return fill_time;
     }
 
     pub fn get_symbol(&self) -> &str {
@@ -227,9 +234,18 @@ impl MktOrders {
         }
     }
 
-    pub async fn add_order(&mut self, order_id: Uuid, order: MktOrder) -> Result<()> {
+    pub async fn add_order(
+        &mut self,
+        order_id: Uuid,
+        symbol: &str,
+        strategy: &str,
+        direction: Direction,
+        action: OrderAction,
+    ) -> Result<Uuid> {
+        let order = MktOrder::new(order_id, action, strategy, symbol, direction, &self.db).await?;
+        let local_id = order.local_id;
         self.mktorders.insert(order_id, order);
-        Ok(())
+        Ok(local_id)
     }
 
     pub async fn update_order(&mut self, order_id: &Uuid) -> Result<MktOrder> {

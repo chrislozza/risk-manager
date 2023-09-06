@@ -1,6 +1,5 @@
 use anyhow::Ok;
 
-
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::interval;
@@ -29,10 +28,7 @@ use super::data::assets::Assets;
 use super::data::locker::LockerStatus;
 use super::data::locker::TransactionType;
 
-
 use super::data::mktorder::OrderAction;
-
-
 
 use super::data::Transactions;
 use super::mktdata::MktData;
@@ -81,7 +77,7 @@ impl Engine {
 
     pub async fn startup(&mut self) -> Result<()> {
         info!("Downloading orders and positions in engine startup");
-        self.transactions.startup().await;
+        self.transactions.startup().await?;
         self.assets.startup().await
     }
 
@@ -117,13 +113,16 @@ impl Engine {
             &self.mktdata,
         )
         .await?;
+        let symbol = &mkt_signal.symbol;
+        let strategy = &mkt_signal.strategy;
+        let direction = mkt_signal.direction;
+        info!(
+            "Stragegy[{}], Symbol[{}], create a waiting transaction",
+            strategy, symbol
+        );
         if let Err(err) = self
             .transactions
-            .add_waiting_transaction(
-                &mkt_signal.symbol,
-                &mkt_signal.strategy,
-                mkt_signal.direction,
-            )
+            .add_waiting_transaction(symbol, strategy, direction)
             .await
         {
             bail!("Failed to add waiting transaction, error={}", err)
@@ -133,7 +132,10 @@ impl Engine {
             .create_position(&mkt_signal.symbol, target_price, size, mkt_signal.side)
             .await
         {
-            return self.transactions.update_transaction(order_id).await;
+            return self
+                .transactions
+                .add_order(&symbol, order_id, direction, OrderAction::Create)
+                .await;
         }
         bail!(
             "Failed to create new position for symbol: {}",
@@ -167,13 +169,11 @@ impl Engine {
         self.mktdata.capture_data(mktdata_update);
     }
 
-    pub async fn mktdata_publish(&mut self) -> anyhow::Result<()> {
+    pub async fn mktdata_publish(&mut self) {
         let snapshots = self.mktdata.get_snapshots();
         for (symbol, last_price) in &snapshots {
-            let (has_crossed, transaction_type) = self
-                .transactions
-                .has_stop_crossed(symbol, last_price)
-                .await;
+            let (has_crossed, transaction_type) =
+                self.transactions.has_stop_crossed(symbol, last_price).await;
             if !has_crossed {
                 continue;
             }
@@ -181,35 +181,49 @@ impl Engine {
                 match transaction_type {
                     TransactionType::Order => {
                         let order_id = transaction.orders[0];
-                        let stop_status = self.handle_cancel(symbol, order_id).await?;
-                        self.transactions
+                        let stop_status = self.handle_cancel(symbol, order_id).await.unwrap();
+                        if let Err(err) = self
+                            .transactions
                             .update_stop_status(symbol, stop_status)
-                            .await?;
+                            .await
+                        {
+                            warn!("Failed to update stop status, error={}", err);
+                        }
                     }
                     TransactionType::Position => {
                         match self.handle_liquidate(symbol).await {
                             Some(order_id) => {
                                 let strategy = transaction.strategy.clone();
-                                self.transactions
-                                    .add_order(&strategy, symbol, order_id, OrderAction::Liquidate)
-                                    .await?;
-                                self.transactions
+                                let direction = transaction.direction.clone();
+                                if let Err(err) = self
+                                    .transactions
+                                    .add_order(symbol, order_id, direction, OrderAction::Liquidate)
+                                    .await
+                                {
+                                    warn!("Failed to add stop order, error={}", err);
+                                }
+                                if let Err(err) = self
+                                    .transactions
                                     .update_stop_status(symbol, LockerStatus::Finished)
-                                    .await?;
+                                    .await
+                                {
+                                    warn!("Failed to update stop status, error={}", err);
+                                }
                             }
                             _ => {
-                                self.transactions
+                                if let Err(err) = self
+                                    .transactions
                                     .update_stop_status(symbol, LockerStatus::Active)
-                                    .await?;
+                                    .await
+                                {
+                                    warn!("Failed to update stop status, error={}", err);
+                                }
                             }
                         };
                     }
                 };
-            } else {
-                bail!("Can't find transaction with symbol: {}", symbol)
             }
         }
-        Ok(())
     }
 
     async fn handle_cancel(&self, symbol: &str, order_id: Uuid) -> Result<LockerStatus> {
@@ -310,32 +324,6 @@ impl Engine {
         Ok(())
     }
 
-    // async fn handle_cancel(&mut self, mktorder: MktOrder) -> Result<()> {
-    //     let symbol = mktorder.get_symbol();
-    //     info!("In handle new for symbol: {symbol}");
-    //     match self.order_handler.cancel_order(&mktorder).await {
-    //         Err(error) => {
-    //             error!("Dropping order cancel, failed to send to server, error={error}");
-    //             self.locker.update_status(symbol, LockerStatus::Active);
-    //             bail!("{error}")
-    //         }
-    //         _ => Ok(()),
-    //     }
-    // }
-
-    // async fn handle_liquidate(&mut self, position: MktPosition) -> Result<MktOrder> {
-    //     let symbol = position.get_symbol();
-    //     info!("In handle new for symbol: {symbol}");
-    //     match self.order_handler.liquidate_position(&position).await {
-    //         Err(error) => {
-    //             error!("Dropping liquidate, failed to send to server, error={error}");
-    //             self.locker.update_status(symbol, LockerStatus::Active);
-    //             bail!("{error}")
-    //         }
-    //         Ok(order) => Ok(order),
-    //     }
-    // }
-
     pub async fn subscribe_to_events(&mut self) -> Result<()> {
         self.order_handler.subscribe_to_events().await?;
 
@@ -352,20 +340,20 @@ impl Engine {
         let mut event_subscriber = engine.lock().await.get_event_subscriber()?;
         let mut mktdata_publish_interval = interval(Duration::from_secs(5));
         tokio::spawn(async move {
-            engine.lock().await.subscribe_to_events().await;
+            let _ = engine.lock().await.subscribe_to_events().await;
             loop {
                 tokio::select!(
                     event = event_subscriber.recv() => {
                         match event {
                             anyhow::Result::Ok(Event::OrderUpdate(event)) => {
                                 info!("Found a trade event: {event:?}");
-                                engine.lock().await.order_update(&event).await;
+                                let _ = engine.lock().await.order_update(&event).await;
                             },
                             anyhow::Result::Ok(Event::Trade(event)) => {
                                 debug!("Found a mkdata event: {event:?}");
                                 engine.lock().await.mktdata_update(&event).await;
                             }
-                            Err(err) => {
+                            anyhow::Result::Err(err) => {
                                 error!("Unknown error: {err}");
                                 shutdown_signal.cancel();
                             }
@@ -375,7 +363,7 @@ impl Engine {
                     //smooth market data updates to avoid reacting to spikes
                     _ = mktdata_publish_interval.tick() => {
                         debug!("Publish mktdata snapshots");
-                        engine.lock().await.mktdata_publish().await;
+                        let _ = engine.lock().await.mktdata_publish().await;
                     }
                     _ = shutdown_signal.cancelled() => {
                         break;

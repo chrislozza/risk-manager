@@ -10,11 +10,7 @@ use tracing::info;
 use anyhow::bail;
 use anyhow::Result;
 
-
 use super::super::events::Side;
-
-
-
 
 use super::web_clients::Connectors;
 
@@ -22,14 +18,12 @@ use crate::to_num;
 
 pub struct OrderHandler {
     connectors: Arc<Connectors>,
-    assets: Vec<asset::Asset>,
 }
 
 impl OrderHandler {
     pub fn new(connectors: &Arc<Connectors>) -> Self {
         OrderHandler {
             connectors: Arc::clone(connectors),
-            assets: Vec::default(),
         }
     }
 
@@ -77,11 +71,7 @@ impl OrderHandler {
     }
 
     pub async fn cancel_order(&self, order_id: &Uuid) -> Result<()> {
-        if let Err(error) = self
-            .connectors
-            .cancel_order(&order::Id(*order_id))
-            .await
-        {
+        if let Err(error) = self.connectors.cancel_order(&order::Id(*order_id)).await {
             bail!(
                 "Failed to cancel order for id {}, error={}",
                 order_id,

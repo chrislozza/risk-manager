@@ -2,10 +2,10 @@ use std::collections::HashMap;
 use tokio_util::sync::CancellationToken;
 
 use axum::response;
-use axum::routing;
-use axum::Router;
+
+
 use tokio::sync::broadcast::Sender;
-use tower_http::cors::CorsLayer;
+
 
 use tracing::{error, info};
 
@@ -67,7 +67,7 @@ impl WebHook {
         WebHook { shutdown_signal }
     }
 
-    pub async fn run(&mut self, sender: Sender<Event>) -> Result<()> {
+    pub async fn run(&mut self, _sender: Sender<Event>) -> Result<()> {
         // let app = Router::new()
         //     .route(
         //         "/v1/mktsignal",

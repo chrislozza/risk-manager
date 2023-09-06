@@ -1,11 +1,9 @@
-use anyhow::bail;
 use anyhow::Ok;
 use anyhow::Result;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::Pool;
 use sqlx::Postgres;
 use std::sync::Arc;
-use uuid::Uuid;
 
 use super::Settings;
 
@@ -55,6 +53,7 @@ impl SqlQueryBuilder {
         format!("{} WHERE {}", sql, placeholders)
     }
 
+    #[cfg(test)]
     pub fn prepare_delete_statement(&self, table: &str, columns: &Vec<&str>) -> String {
         if columns.is_empty() {
             return format!("DELETE FROM {}", table);
@@ -101,6 +100,8 @@ impl DBClient {
 mod tests {
     use super::*;
     use crate::settings::DatabaseConfig;
+    use anyhow::bail;
+    use uuid::Uuid;
 
     #[test]
     fn test_sql_insert_statement() {

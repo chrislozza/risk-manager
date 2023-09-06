@@ -1,5 +1,6 @@
-use apca::api::v2::position;
+use apca::api::v2::position::Position;
 use num_decimal::Num;
+use uuid::Uuid;
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -8,9 +9,6 @@ use anyhow::bail;
 use anyhow::Result;
 use std::fmt;
 
-
-
-
 use crate::events::Direction;
 use crate::to_num;
 
@@ -18,22 +16,26 @@ use super::super::web_clients::Connectors;
 
 #[derive(Debug, Clone)]
 pub struct MktPosition {
-    position: position::Position,
-    strategy: String,
-    direction: Direction,
+    pub local_id: Uuid,
+    pub position: Option<Position>,
+    pub symbol: String,
+    pub strategy: String,
+    pub direction: Direction,
 }
 
 impl MktPosition {
-    pub fn new(position: position::Position, strategy: &str, direction: Direction) -> Self {
+    pub fn new(symbol: &str, strategy: &str, direction: Direction) -> Self {
         MktPosition {
-            position,
+            local_id: Uuid::new_v4(),
+            position: None,
+            symbol: symbol.into(),
             strategy: strategy.into(),
             direction,
         }
     }
 
-    pub fn update_inner(&mut self, position: position::Position) -> &Self {
-        self.position = position;
+    pub fn update_inner(&mut self, position: Position) -> &Self {
+        self.position = Some(position);
         self
     }
 
@@ -46,19 +48,25 @@ impl MktPosition {
     }
 
     pub fn get_entry_price(&self) -> Num {
-        self.position.average_entry_price.clone()
+        self.position.as_ref().unwrap().average_entry_price.clone()
     }
 
     pub fn get_symbol(&self) -> &str {
-        &self.position.symbol
+        &self.position.as_ref().unwrap().symbol
     }
 
     pub fn get_cost_basis(&self) -> Num {
-        self.position.cost_basis.clone()
+        self.position.as_ref().unwrap().cost_basis.clone()
     }
 
     pub fn get_pnl(&self) -> Num {
-        match self.position.unrealized_gain_total.clone() {
+        match self
+            .position
+            .as_ref()
+            .unwrap()
+            .unrealized_gain_total
+            .clone()
+        {
             Some(val) => val,
             None => to_num!(0.0),
         }
@@ -67,14 +75,15 @@ impl MktPosition {
 
 impl fmt::Display for MktPosition {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let position = self.position.as_ref().unwrap();
         write!(
             f,
             "Position symbol[{}], strategy[{}] avgPrice[{}], size[{}], pnl[{}]",
-            self.position.symbol,
+            position.symbol,
             self.strategy,
-            self.position.current_price.as_ref().unwrap().round_with(2),
-            self.position.quantity,
-            self.position
+            position.current_price.as_ref().unwrap().round_with(2),
+            position.quantity,
+            position
                 .unrealized_gain_total
                 .as_ref()
                 .unwrap()
@@ -100,6 +109,13 @@ impl MktPositions {
         Ok(&self.mktpositions[symbol])
     }
 
+    pub fn insert(&mut self, symbol: &str, strategy: &str, direction: Direction) -> Uuid {
+        let mktpostion = MktPosition::new(symbol, strategy, direction);
+        let local_id = mktpostion.local_id;
+        self.mktpositions.insert(symbol.to_string(), mktpostion);
+        local_id
+    }
+
     pub async fn update_position(&mut self, symbol: &str) -> Result<MktPosition> {
         let position = self.connectors.get_position(symbol).await?;
         if let Some(mktposition) = self.mktpositions.get_mut(symbol) {
@@ -113,20 +129,13 @@ impl MktPositions {
         &self.mktpositions
     }
 
-    pub async fn update_positions(
-        &mut self,
-    ) -> Result<HashMap<String, MktPosition>> {
-/*         let positions = self.connectors.get_positions().await?;
+    pub async fn update_positions(&mut self) -> Result<&HashMap<String, MktPosition>> {
+        let positions = self.connectors.get_positions().await?;
         for position in &positions {
-            let transaction = &transactions[&position.symbol];
-            let mktposition = MktPosition::new(
-                position.clone(),
-                &transaction.strategy,
-                transaction.direction,
-            );
-            self.mktpositions
-                .insert(mktposition.get_symbol().to_string(), mktposition);
-        } */
-        Ok(self.mktpositions.clone())
+            if let Some(mktposition) = self.mktpositions.get_mut(&position.symbol) {
+                mktposition.update_inner(position.clone());
+            }
+        }
+        Ok(&self.mktpositions)
     }
 }

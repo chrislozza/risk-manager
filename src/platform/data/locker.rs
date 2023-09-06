@@ -124,7 +124,7 @@ impl Locker {
         Ok(())
     }
 
-    pub fn create_new_stop(
+    pub async fn create_new_stop(
         &mut self,
         symbol: &str,
         strategy: &str,
@@ -139,8 +139,9 @@ impl Locker {
             strategy_cfg.trailing_size,
             t_type,
             &self.db,
-        );
-        let stop_id = stop.local_id.unwrap();
+        )
+        .await;
+        let stop_id = stop.local_id;
         info!(
             "Strategy[{}] locker monitoring new symbol: {} entry price: {} transaction: {:?}",
             strategy,
@@ -217,7 +218,7 @@ impl Locker {
 
 #[derive(Debug, Clone)]
 struct TrailingStop {
-    local_id: Option<Uuid>,
+    local_id: Uuid,
     strategy: String,
     symbol: String,
     entry_price: Num,
@@ -272,7 +273,7 @@ impl FromRow<'_, PgRow> for TrailingStop {
 }
 
 impl TrailingStop {
-    fn new(
+    async fn new(
         strategy: &str,
         symbol: &str,
         entry_price: Num,
@@ -285,7 +286,7 @@ impl TrailingStop {
         let high_low = entry_price.clone();
         let current_price = entry_price.clone();
         let mut stop = TrailingStop {
-            local_id: None,
+            local_id: Uuid::nil(),
             strategy: strategy.to_string(),
             symbol: symbol.to_string(),
             entry_price,
@@ -299,7 +300,7 @@ impl TrailingStop {
             status: LockerStatus::Active,
             t_type,
         };
-        stop.persist_to_db(db);
+        let _ = stop.persist_to_db(db).await;
         stop
     }
 
@@ -397,16 +398,17 @@ impl TrailingStop {
             "local_id",
         ];
 
-        let stmt = match self.local_id {
-            Some(_) => db
+        let mut stmt = String::default();
+        if Uuid::is_nil(&self.local_id) {
+            self.local_id = Uuid::new_v4();
+            stmt = db
                 .query_builder
-                .prepare_update_statement("locker", &columns),
-            None => {
-                self.local_id = Some(Uuid::new_v4());
-                db.query_builder
-                    .prepare_insert_statement("locker", &columns)
-            }
-        };
+                .prepare_insert_statement("mktorder", &columns);
+        } else {
+            stmt = db
+                .query_builder
+                .prepare_update_statement("mktorder", &columns);
+        }
 
         if let Err(err) = sqlx::query(&stmt)
             .bind(self.strategy.clone())
@@ -417,7 +419,7 @@ impl TrailingStop {
             .bind(self.multiplier)
             .bind(self.status.to_string())
             .bind(self.local_id)
-            .fetch_one(&db.pool)
+            .execute(&db.pool)
             .await
         {
             bail!("Failed to publish to db, error={}", err)
