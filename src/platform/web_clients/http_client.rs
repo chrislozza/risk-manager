@@ -40,9 +40,8 @@ impl HttpClient {
                 Ok(payload) => return Ok(payload),
             };
             if retry == 0 {
-                error!("Failed to post order");
                 self.shutdown_signal.cancel();
-                bail!("Failure in http request")
+                bail!("No retry attempts left, exiting app")
             }
             retry -= 1;
             warn!("Retry order posting retries left: {retry}");

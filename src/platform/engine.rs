@@ -104,7 +104,7 @@ impl Engine {
                 return Ok(());
             }
         };
-        let target_price = to_num!(mkt_signal.price);
+        let entry_price = to_num!(mkt_signal.price);
         let size = Self::size_position(
             &mkt_signal.symbol,
             &self.account.equity().await,
@@ -122,25 +122,35 @@ impl Engine {
         );
         if let Err(err) = self
             .transactions
-            .add_waiting_transaction(symbol, strategy, direction)
+            .add_waiting_transaction(symbol, strategy, direction, entry_price.clone())
             .await
         {
             bail!("Failed to add waiting transaction, error={}", err)
         };
-        if let anyhow::Result::Ok(order_id) = self
+        match self
             .order_handler
-            .create_position(&mkt_signal.symbol, target_price, size, mkt_signal.side)
+            .create_position(
+                &mkt_signal.symbol,
+                entry_price.clone(),
+                size,
+                mkt_signal.side,
+            )
             .await
         {
-            return self
-                .transactions
-                .add_order(&symbol, order_id, direction, OrderAction::Create)
-                .await;
+            anyhow::Result::Ok(order_id) => {
+                self.transactions
+                    .add_order(&symbol, order_id, direction, OrderAction::Create)
+                    .await?;
+                self.transactions
+                    .add_stop(symbol, strategy, entry_price)
+                    .await
+            }
+            Err(err) => bail!(
+                "Failed to create new position for symbol: {}, error={}",
+                mkt_signal.symbol,
+                err
+            ),
         }
-        bail!(
-            "Failed to create new position for symbol: {}",
-            mkt_signal.symbol,
-        )
     }
 
     pub async fn update_status(&mut self) -> Result<()> {
@@ -193,7 +203,6 @@ impl Engine {
                     TransactionType::Position => {
                         match self.handle_liquidate(symbol).await {
                             Some(order_id) => {
-                                let strategy = transaction.strategy.clone();
                                 let direction = transaction.direction.clone();
                                 if let Err(err) = self
                                     .transactions
@@ -210,7 +219,7 @@ impl Engine {
                                     warn!("Failed to update stop status, error={}", err);
                                 }
                             }
-                            _ => {
+                            None => {
                                 if let Err(err) = self
                                     .transactions
                                     .update_stop_status(symbol, LockerStatus::Active)
@@ -250,6 +259,7 @@ impl Engine {
 
     pub async fn order_update(&mut self, order_update: &updates::OrderUpdate) -> Result<()> {
         let order_id = order_update.order.id.0;
+        info!("{:?}", order_update.order);
         match order_update.event {
             updates::OrderStatus::New => {
                 self.handle_new(order_id).await?;
@@ -266,61 +276,66 @@ impl Engine {
     }
 
     async fn handle_cancel_reject(&mut self, order_id: Uuid) -> Result<()> {
-        let order = self.transactions.get_order(&order_id).await?;
-        let symbol = order.get_symbol().to_string();
-        info!("In handle cancel reject for symbol: {}", symbol);
+        if let Some(order) = self.transactions.get_order(&order_id).await {
+            let symbol = order.symbol.clone();
+            info!("In handle cancel reject for symbol: {}", symbol);
 
-        let action = order.get_action();
+            let action = order.action;
 
-        match action {
-            OrderAction::Create => {
-                self.transactions.cancel_transaction(order_id).await?;
-            }
-            OrderAction::Liquidate => self.transactions.reactivate_stop(&symbol).await,
-        };
+            match action {
+                OrderAction::Create => {
+                    self.transactions.cancel_transaction(order_id).await?;
+                }
+                OrderAction::Liquidate => self.transactions.reactivate_stop(&symbol).await,
+            };
+        } else {
+            warn!("Order with Id: {}, not found in db", order_id);
+        }
         Ok(())
     }
 
     async fn handle_new(&mut self, order_id: Uuid) -> Result<()> {
-        let order = self.transactions.get_order(&order_id).await?;
-        let symbol = order.get_symbol().to_string();
-        info!("In handle new for symbol: {}", symbol);
+        if let Some(order) = self.transactions.get_order(&order_id).await {
+            let symbol = order.symbol.clone();
+            info!("In handle new for symbol: {}", symbol);
 
-        if let OrderAction::Create = order.get_action() {
-            let strategy = order.get_strategy().to_string();
-            let entry_price = order.get_limit_price();
-            self.transactions
-                .activate_stop(&symbol, &strategy, entry_price)
-                .await?;
-            self.mktdata.subscribe(&symbol).await?;
+            if let OrderAction::Create = order.action {
+                self.transactions.activate_stop(&symbol).await;
+                self.mktdata.subscribe(&symbol).await?;
+            } else {
+                warn!("Didn't add order to locker action: {}", order.action);
+            };
         } else {
-            warn!("Didn't add order to locker action: {}", order.get_action());
-        };
+            warn!("Order with Id: {}, not found in db", order_id);
+        }
         Ok(())
     }
 
     async fn handle_fill(&mut self, order_id: Uuid) -> Result<()> {
-        let order = self.transactions.get_order(&order_id).await?;
-        let symbol = order.get_symbol().to_string();
-        info!("In handle fill for symbol: : {}", symbol);
+        if let Some(order) = self.transactions.get_order(&order_id).await {
+            let symbol = order.symbol.clone();
+            info!("In handle fill for symbol: : {}", symbol);
 
-        let fill_price = order.get_fill_price();
-        let action = order.get_action();
+            let fill_price = order.fill_price.clone();
+            let action = order.action;
 
-        match action {
-            OrderAction::Create => {
-                self.transactions
-                    .update_stop_entry_price(&symbol, fill_price)
-                    .await?;
-                self.transactions.update_transaction(order_id).await?;
-            }
-            OrderAction::Liquidate => {
-                self.mktdata.unsubscribe(&symbol).await?;
-                self.transactions.stop_complete(&symbol).await?;
+            match action {
+                OrderAction::Create => {
+                    self.transactions
+                        .update_stop_entry_price(&symbol, fill_price)
+                        .await?;
+                    self.transactions.update_transaction(order_id).await?;
+                }
+                OrderAction::Liquidate => {
+                    self.mktdata.unsubscribe(&symbol).await?;
+                    self.transactions.stop_complete(&symbol).await?;
 
-                self.transactions.close_transaction(order_id).await?
-            }
-        };
+                    self.transactions.close_transaction(order_id).await?
+                }
+            };
+        } else {
+            warn!("Order with Id: {}, not found in db", order_id);
+        }
         Ok(())
     }
 
@@ -346,11 +361,11 @@ impl Engine {
                     event = event_subscriber.recv() => {
                         match event {
                             anyhow::Result::Ok(Event::OrderUpdate(event)) => {
-                                info!("Found a trade event: {event:?}");
+                                debug!("Found a trade event: {event:?}");
                                 let _ = engine.lock().await.order_update(&event).await;
                             },
                             anyhow::Result::Ok(Event::Trade(event)) => {
-                                debug!("Found a mkdata event: {event:?}");
+                                info!("Found a mkdata event: {event:?}");
                                 engine.lock().await.mktdata_update(&event).await;
                             }
                             anyhow::Result::Err(err) => {

@@ -15,7 +15,6 @@ use super::Settings;
 pub struct EventClients {
     pubsub: GcpPubSub,
     webhook: WebHook,
-    subscriber: Receiver<Event>,
     publisher: Sender<Event>,
 }
 
@@ -24,13 +23,12 @@ impl EventClients {
         shutdown_signal: CancellationToken,
         settings: Settings,
     ) -> Result<Arc<Mutex<Self>>> {
-        let (publisher, subscriber) = broadcast::channel(32);
+        let (publisher, _) = broadcast::channel(32);
         let pubsub = GcpPubSub::new(shutdown_signal.clone(), settings.clone()).await?;
         let webhook = WebHook::new(shutdown_signal).await;
         Ok(Arc::new(Mutex::new(EventClients {
             pubsub,
             webhook,
-            subscriber,
             publisher,
         })))
     }

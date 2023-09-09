@@ -6,6 +6,8 @@ use sqlx::Postgres;
 use std::sync::Arc;
 
 use super::Settings;
+use tracing::debug;
+use tracing::info;
 
 #[derive(Debug)]
 pub struct SqlQueryBuilder;
@@ -50,7 +52,8 @@ impl SqlQueryBuilder {
             .collect::<Vec<String>>()
             .join(" AND ");
 
-        format!("{} WHERE {}", sql, placeholders)
+        let sql = format!("{} WHERE {}", sql, placeholders);
+        sql
     }
 
     #[cfg(test)]
@@ -210,7 +213,7 @@ mod tests {
                 .fetch_one(&db.pool)
                 .await
             {
-                bail!("Failed to publish to db")
+                bail!("Failed to publish to db, error={}", err)
             }
             Ok(())
         }

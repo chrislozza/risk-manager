@@ -1,8 +1,10 @@
 use anyhow::Ok;
 
+use apca::api::v2::positions;
 use tracing::error;
 use tracing::info;
 use tracing::warn;
+use tracing_subscriber::filter::FilterExt;
 
 use crate::to_num;
 use std::collections::HashMap;
@@ -44,10 +46,11 @@ use super::web_clients::Connectors;
 
 use crate::Settings;
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy, Default)]
 pub enum TransactionStatus {
+    #[default]
     Waiting,
-    Active,
+    Confirmed,
     Cancelled,
     Complete,
 }
@@ -64,7 +67,7 @@ impl FromStr for TransactionStatus {
     fn from_str(val: &str) -> Result<Self, Self::Err> {
         match val {
             "Waiting" => std::result::Result::Ok(TransactionStatus::Waiting),
-            "Active" => std::result::Result::Ok(TransactionStatus::Active),
+            "Active" => std::result::Result::Ok(TransactionStatus::Confirmed),
             "Cancelled" => std::result::Result::Ok(TransactionStatus::Cancelled),
             "Complete" => std::result::Result::Ok(TransactionStatus::Complete),
             _ => Err(format!(
@@ -75,7 +78,7 @@ impl FromStr for TransactionStatus {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Default)]
 pub struct Transaction {
     pub local_id: Uuid,
     pub orders: Vec<Uuid>,
@@ -133,24 +136,16 @@ impl Transaction {
         symbol: &str,
         strategy: &str,
         direction: Direction,
+        entry_price: Num,
         db: &Arc<DBClient>,
     ) -> Result<Self> {
         let mut transaction = Transaction {
-            local_id: Uuid::default(),
-            locker: Uuid::default(),
-            orders: Vec::default(),
             strategy: strategy.to_string(),
             symbol: symbol.to_string(),
-            entry_time: DateTime::<Utc>::default(),
-            exit_time: DateTime::<Utc>::default(),
-            entry_price: to_num!(0.0),
-            exit_price: to_num!(0.0),
-            quantity: Num::default(),
-            pnl: to_num!(0.0),
-            roi: to_num!(0.0),
-            cost_basis: to_num!(0.0),
+            entry_price,
             direction,
             status: TransactionStatus::Waiting,
+            ..Default::default()
         };
         transaction.persist_db(db.clone()).await?;
         Ok(transaction)
@@ -165,20 +160,20 @@ impl Transaction {
     }
 
     fn update_from_position(&mut self, position: &MktPosition) {
-        self.cost_basis = position.get_cost_basis();
-        self.pnl = position.get_pnl();
+        self.cost_basis = position.cost_basis.clone();
+        self.pnl = position.pnl.clone();
         self.roi = self.calculate_roi();
     }
 
     fn update_from_order(&mut self, order: &MktOrder) {
-        match order.get_action() {
+        match order.action {
             OrderAction::Create => {
-                self.entry_time = order.get_fill_time();
-                self.entry_price = order.get_fill_price();
+                self.entry_time = order.fill_time;
+                self.entry_price = order.fill_price.clone();
             }
             OrderAction::Liquidate => {
-                self.exit_time = order.get_fill_time();
-                self.exit_price = order.get_fill_price();
+                self.exit_time = order.fill_time;
+                self.exit_price = order.fill_price.clone();
             }
         };
         if !self
@@ -194,22 +189,6 @@ impl Transaction {
         }
     }
 
-    async fn load_from_db(local_id: Uuid, db: Arc<DBClient>) -> Result<Self> {
-        let columns = vec!["local_id"];
-        let stmt = db
-            .query_builder
-            .prepare_fetch_statement("transaction", &columns);
-
-        match sqlx::query_as::<_, Transaction>(&stmt)
-            .bind(local_id)
-            .fetch_one(&db.pool)
-            .await
-        {
-            Err(err) => bail!("Failed to pull data from db, error={}", err),
-            core::result::Result::Ok(val) => Ok(val),
-        }
-    }
-
     async fn transaction_complete(
         &mut self,
         order: &MktOrder,
@@ -220,10 +199,10 @@ impl Transaction {
         self.status = status;
         match status {
             TransactionStatus::Complete => {
-                self.exit_price = order.get_fill_price();
-                self.exit_time = order.get_fill_time();
+                self.exit_price = order.fill_price.clone();
+                self.exit_time = order.fill_time;
                 if let Some(position) = mktposition {
-                    self.cost_basis = position.get_cost_basis();
+                    self.cost_basis = position.cost_basis;
                 }
             }
             _ => (),
@@ -262,11 +241,13 @@ impl Transaction {
                 .prepare_update_statement("transaction", &columns);
         }
 
-        let order_string = self
+        let mut order_string = self
             .orders
             .iter()
             .map(|id| id.to_string() + ",")
             .collect::<String>();
+
+        let _ = order_string.pop();
 
         if let Err(err) = sqlx::query(&stmt)
             .bind(self.strategy.clone())
@@ -321,78 +302,76 @@ impl Transactions {
     }
 
     pub async fn startup(&mut self) -> Result<()> {
-        info!("Loading transactions from db");
-
         let columns = vec!["status"];
-        let stmt = self
-            .db
-            .query_builder
-            .prepare_fetch_statement("transaction", &columns);
-        let rows = match sqlx::query(&stmt)
-            .bind(TransactionStatus::Active.to_string())
-            .fetch_all(&self.db.pool)
-            .await
-        {
-            sqlx::Result::Ok(val) => val,
-            Err(err) => panic!(
-                "Failed to fetch transactions from db, err={}, closing app",
-                err
-            ),
-        };
 
-        for row in &rows {
-            let local_id = row.try_get("local_id")?;
-            let transaction = Transaction::load_from_db(local_id, self.db.clone()).await?;
-            let symbol = transaction.symbol.clone();
-            self.transactions.insert(symbol, transaction);
+        async fn fetch_with_status(
+            columns: Vec<&str>,
+            status: TransactionStatus,
+            db: &Arc<DBClient>,
+        ) -> Vec<Transaction> {
+            let stmt = db
+                .query_builder
+                .prepare_fetch_statement("transaction", &columns);
+            match sqlx::query_as::<_, Transaction>(&stmt)
+                .bind(status.to_string())
+                .fetch_all(&db.pool)
+                .await
+            {
+                sqlx::Result::Ok(val) => val,
+                Err(err) => panic!(
+                    "Failed to fetch transactions from db, err={}, closing app",
+                    err
+                ),
+            }
         }
-
-        info!("Downloading orders and positions");
 
         self.locker.startup().await?;
-        let mktorders = self.mktorders.update_orders().await?;
-        for mktorder in mktorders.values() {
-            self.locker
-                .create_new_stop(
-                    mktorder.get_symbol(),
-                    mktorder.get_strategy(),
-                    mktorder.get_limit_price(),
-                    TransactionType::Order,
-                )
-                .await;
-        }
 
-        let mktpositions = self.mktpositions.update_positions().await?;
-        for mktposition in mktpositions.values() {
-            self.locker
-                .create_new_stop(
-                    &mktposition.symbol,
-                    &mktposition.strategy,
-                    mktposition.get_entry_price(),
-                    TransactionType::Position,
-                )
-                .await;
+        let mut db_transact =
+            fetch_with_status(columns.clone(), TransactionStatus::Waiting, &self.db).await;
+        info!("Pulled {} waiting transactions from db", db_transact.len());
+
+        let orders = Vec::from_iter(db_transact.iter().map(|t| t.orders[0]));
+        let orders_count = orders.len();
+        let _ = self.mktorders.startup(orders).await?;
+
+        db_transact
+            .extend(fetch_with_status(columns, TransactionStatus::Confirmed, &self.db).await);
+        let _ = self.mktpositions.update_positions().await?;
+        let position_count = db_transact.len() - orders_count;
+        info!("Pulled {} confirmed transactions from db", position_count,);
+
+        for transaction in db_transact {
+            self.transactions
+                .insert(transaction.symbol.clone(), transaction.clone());
         }
         Ok(())
     }
 
     pub async fn get_subscribed_symbols(&mut self) -> Result<Vec<String>> {
         let mktorders = self.mktorders.update_orders().await?;
-        let mut orders: Vec<String> = mktorders
-            .values()
-            .map(|o| o.get_symbol().to_string())
-            .collect();
+        let mut orders: Vec<String> = mktorders.values().map(|o| o.symbol.clone()).collect();
 
         let mktpositions = self.mktpositions.update_positions().await?;
-        let positions: Vec<String> = mktpositions
-            .values()
-            .map(|p| p.get_symbol().to_string())
-            .collect();
+        let positions: Vec<String> = mktpositions.values().map(|p| p.symbol.clone()).collect();
         orders.extend(positions);
         Ok(orders)
     }
 
     pub async fn print_active_transactions(&mut self) -> Result<()> {
+        info!("Printing active orders");
+        let _ = self.mktpositions.update_positions().await?;
+        let orders = self.mktorders.update_orders().await?;
+        for order in orders.values() {
+            info!("{:?}", order);
+        }
+        info!("Printing confirmed transactions");
+        for transaction in self.transactions.values() {
+            if let Some(position) = self.mktpositions.get_position(&transaction.symbol) {
+                let stop = self.locker.print_stop(&transaction.locker);
+                info!("{} {}", position, stop);
+            }
+        }
         Ok(())
     }
 
@@ -404,27 +383,33 @@ impl Transactions {
         self.mktpositions.update_position(symbol).await
     }
 
-    pub async fn activate_stop(
-        &mut self,
-        symbol: &str,
-        strategy: &str,
-        entry_price: Num,
-    ) -> Result<()> {
+    pub async fn add_stop(&mut self, symbol: &str, strategy: &str, entry_price: Num) -> Result<()> {
         if let Some(transaction) = self.transactions.get_mut(symbol) {
+            info!(
+                "Strategy[{}] locker tracking {} at entry_price: {}",
+                strategy, symbol, entry_price
+            );
             let locker_id = self
                 .locker
                 .create_new_stop(symbol, strategy, entry_price, TransactionType::Order)
                 .await;
             transaction.locker = locker_id;
+            transaction.persist_db(self.db.clone()).await?
         } else {
             warn!(
                 "Unable to activate locker, transaction not found for symbol: {}",
                 symbol
             );
         };
-
         Ok(())
     }
+
+    pub async fn activate_stop(&mut self, symbol: &str) {
+        if let Some(transaction) = self.transactions.get_mut(symbol) {
+            self.locker.revive(transaction.locker);
+        }
+    }
+
     pub async fn reactivate_stop(&mut self, symbol: &str) {
         if let Some(transaction) = self.transactions.get_mut(symbol) {
             self.locker.revive(transaction.locker);
@@ -472,8 +457,10 @@ impl Transactions {
         symbol: &str,
         strategy: &str,
         direction: Direction,
+        entry_price: Num,
     ) -> Result<()> {
-        let transaction = Transaction::new(symbol, strategy, direction, &self.db).await?;
+        let transaction =
+            Transaction::new(symbol, strategy, direction, entry_price, &self.db).await?;
         self.transactions.insert(symbol.to_string(), transaction);
         Ok(())
     }
@@ -520,9 +507,8 @@ impl Transactions {
 
     pub async fn cancel_transaction(&mut self, order_id: Uuid) -> Result<()> {
         let order = self.update_order(order_id).await?;
-        let symbol = order.get_symbol().clone();
-        if let Some(transaction) = self.transactions.get_mut(symbol) {
-            let _symbol = order.get_symbol();
+        let symbol = order.symbol.clone();
+        if let Some(transaction) = self.transactions.get_mut(&symbol) {
             transaction
                 .transaction_complete(&order, None, TransactionStatus::Cancelled, &self.db)
                 .await;
@@ -536,7 +522,7 @@ impl Transactions {
         Ok(())
     }
 
-    pub async fn get_order(&self, order_id: &Uuid) -> Result<&MktOrder> {
+    pub async fn get_order(&self, order_id: &Uuid) -> Option<&MktOrder> {
         self.mktorders.get_order(order_id).await
     }
 
@@ -552,11 +538,12 @@ impl Transactions {
         action: OrderAction,
     ) -> Result<()> {
         if let Some(transaction) = self.transactions.get_mut(symbol) {
-            let local_id = self
+            let _ = self
                 .mktorders
                 .add_order(order_id, symbol, &transaction.strategy, direction, action)
                 .await?;
-            transaction.orders.push(local_id);
+            transaction.orders.push(order_id);
+            transaction.persist_db(self.db.clone()).await?;
         } else {
             bail!(
                 "Could not find transaction for new order with symbol: {}",
@@ -575,7 +562,7 @@ impl Transactions {
         if let Some(transaction) = self.transactions.get_mut(symbol) {
             let locker_id = transaction.locker;
             let transaction_type = self.locker.get_transaction_type(&locker_id);
-            let should_close = self.locker.should_close(&locker_id, last_price);
+            let should_close = self.locker.should_close(&locker_id, last_price).await;
             return (should_close, transaction_type);
         }
         (false, TransactionType::Order)

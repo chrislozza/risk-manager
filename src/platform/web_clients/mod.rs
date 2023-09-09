@@ -2,6 +2,7 @@ use apca::api::v2::account;
 use apca::api::v2::asset;
 use apca::api::v2::assets;
 use apca::api::v2::order;
+use apca::api::v2::order::Id;
 use apca::api::v2::orders;
 use apca::api::v2::position;
 use apca::api::v2::positions;
@@ -9,9 +10,10 @@ use apca::data::v2::bars;
 use apca::data::v2::stream;
 use apca::ApiInfo;
 use apca::Client;
-use apca::api::v2::order::Id;
 
+use anyhow::bail;
 use anyhow::Result;
+use std::default;
 use std::sync::Arc;
 use url::Url;
 use uuid::Uuid;
@@ -35,7 +37,6 @@ pub struct Connectors {
     publisher: broadcast::Sender<Event>,
     http_client: HttpClient,
     websocket: WebSocket,
-    shutdown_signal: CancellationToken,
 }
 
 impl Connectors {
@@ -60,7 +61,6 @@ impl Connectors {
             publisher,
             http_client,
             websocket,
-            shutdown_signal,
         }))
     }
 
@@ -69,90 +69,158 @@ impl Connectors {
     }
 
     pub async fn get_assets(&self, request: &assets::AssetsReq) -> Result<Vec<asset::Asset>> {
-        self.http_client
+        match self
+            .http_client
             .send_request::<assets::Get>(&self.client, request)
             .await
+        {
+            Err(err) => bail!("Call to get_assets failed, error={}", err),
+            val => val,
+        }
     }
 
     pub async fn get_account_details(&self) -> Result<account::Account> {
-        self.http_client
+        match self
+            .http_client
             .send_request::<account::Get>(&self.client, &())
             .await
+        {
+            Err(err) => bail!("Call to get_account_details failed, error={}", err),
+            val => val,
+        }
     }
 
     pub async fn get_order(&self, order_id: Uuid) -> Result<order::Order> {
         let _request = orders::OrdersReq::default();
-        self.http_client
+        match self
+            .http_client
             .send_request::<order::Get>(&self.client, &Id(order_id))
             .await
+        {
+            Err(err) => bail!("Call to get_order failed, error={}", err),
+            val => val,
+        }
     }
 
     pub async fn get_orders(&self) -> Result<Vec<order::Order>> {
-        let request = orders::OrdersReq::default();
-        self.http_client
+        let request = orders::OrdersReq {
+            status: orders::Status::All,
+            ..Default::default()
+        };
+        match self
+            .http_client
             .send_request::<orders::Get>(&self.client, &request)
             .await
+        {
+            Err(err) => bail!("Call to get_orders failed, error={}", err),
+            val => val,
+        }
     }
 
     pub async fn get_position(&self, symbol: &str) -> Result<position::Position> {
         let symbol_exchange: asset::Symbol =
             asset::Symbol::SymExchg(symbol.to_string(), asset::Exchange::Amex);
-        self.http_client
+        match self
+            .http_client
             .send_request::<position::Get>(&self.client, &symbol_exchange)
             .await
+        {
+            Err(err) => bail!("Call to get_position failed, error={}", err),
+            val => val,
+        }
     }
 
     pub async fn get_positions(&self) -> Result<Vec<position::Position>> {
-        self.http_client
+        match self
+            .http_client
             .send_request::<positions::Get>(&self.client, &())
             .await
+        {
+            Err(err) => bail!("Call to get_positions failed, error={}", err),
+            val => val,
+        }
     }
 
     pub async fn place_order(&self, request: &order::OrderReq) -> Result<order::Order> {
-        self.http_client
+        match self
+            .http_client
             .send_request::<order::Post>(&self.client, request)
             .await
+        {
+            Err(err) => bail!("Call to place_order failed, error={}", err),
+            val => val,
+        }
     }
 
     pub async fn cancel_order(&self, id: &order::Id) -> Result<()> {
-        self.http_client
+        match self
+            .http_client
             .send_request::<order::Delete>(&self.client, id)
             .await
+        {
+            Err(err) => bail!("Call to cancel_order failed, error={}", err),
+            val => val,
+        }
     }
 
     pub async fn close_position(&self, symbol: &asset::Symbol) -> Result<order::Order> {
-        self.http_client
+        match self
+            .http_client
             .send_request::<position::Delete>(&self.client, symbol)
             .await
+        {
+            Err(err) => bail!("Call to close_position failed, error={}", err),
+            val => val,
+        }
     }
 
     pub async fn get_historical_bars(&self, request: &bars::BarsReq) -> Result<bars::Bars> {
-        self.http_client
+        match self
+            .http_client
             .send_request::<bars::Get>(&self.client, request)
             .await
+        {
+            Err(err) => bail!("Call to get_historical_bars failed, error={}", err),
+            val => val,
+        }
     }
 
     pub async fn subscribe_to_symbols(
         &self,
         symbol: stream::SymbolList,
     ) -> Result<stream::Symbols> {
-        self.websocket
+        match self
+            .websocket
             .subscribe_to_mktdata(&self.client, symbol)
             .await
+        {
+            Err(err) => bail!("Call to subscribe_to_symbols failed, error={}", err),
+            val => val,
+        }
     }
 
     pub async fn unsubscribe_from_symbols(
         &self,
         symbols: stream::SymbolList,
     ) -> Result<stream::Symbols> {
-        self.websocket
+        match self
+            .websocket
             .unsubscribe_from_mktdata(&self.client, symbols)
             .await
+        {
+            Err(err) => bail!("Call to unsubscribe_from_symbols failed, error={}", err),
+            val => val,
+        }
     }
 
     pub async fn subscibe_to_order_updates(&self) -> Result<()> {
-        self.websocket
+        match self
+            .websocket
             .subscribe_to_order_updates(&self.client)
             .await
+        {
+            Err(err) => bail!("Call to subscibe_to_order_updates failed, error={}", err),
+            val => val,
+        }
     }
 }
