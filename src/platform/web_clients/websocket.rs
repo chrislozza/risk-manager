@@ -138,7 +138,7 @@ impl WebSocket {
                                     stream::Data::Trade(data) => Event::Trade(data),
                                     _ => return,
                                 };
-                                let _ = match subscriber.send(event) {
+                                match subscriber.send(event) {
                                     Err(broadcast::error::SendError(data)) => {
                                         error!("{data:?}")
                                     }

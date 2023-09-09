@@ -77,7 +77,7 @@ async fn main() {
         }
     };
 
-    info!("Starting trading app");
+    info!("**************** Let the trading begin! ****************\n");
 
     let key = env::var("API_KEY").expect("Failed to read the 'key' environment variable.");
     let secret = env::var("API_SECRET").expect("Failed to read the 'secret' environment variable.");

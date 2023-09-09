@@ -3,6 +3,7 @@ use num_decimal::Num;
 use uuid::Uuid;
 
 use std::collections::HashMap;
+
 use std::sync::Arc;
 
 use anyhow::bail;
@@ -14,60 +15,43 @@ use crate::to_num;
 
 use super::super::web_clients::Connectors;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct MktPosition {
     pub local_id: Uuid,
-    pub position: Option<Position>,
     pub symbol: String,
     pub strategy: String,
+    pub avg_price: Num,
+    pub quantity: Num,
+    pub cost_basis: Num,
+    pub pnl: Num,
     pub direction: Direction,
 }
 
 impl MktPosition {
     pub fn new(symbol: &str, strategy: &str, direction: Direction) -> Self {
         MktPosition {
-            local_id: Uuid::new_v4(),
-            position: None,
             symbol: symbol.into(),
             strategy: strategy.into(),
             direction,
+            ..Default::default()
         }
     }
 
     pub fn update_inner(&mut self, position: Position) -> &Self {
-        self.position = Some(position);
+        let entry_price = position.average_entry_price.clone();
+        self.avg_price = match &position.current_price {
+            Some(price) => price.clone(),
+            None => entry_price,
+        };
+        self.quantity = position.quantity.clone();
+        self.cost_basis = position.cost_basis.clone();
+        self.pnl = self.get_pnl(&position);
         self
     }
 
-    pub fn get_strategy(&self) -> &str {
-        &self.strategy
-    }
-
-    pub fn get_direction(&self) -> Direction {
-        self.direction
-    }
-
-    pub fn get_entry_price(&self) -> Num {
-        self.position.as_ref().unwrap().average_entry_price.clone()
-    }
-
-    pub fn get_symbol(&self) -> &str {
-        &self.position.as_ref().unwrap().symbol
-    }
-
-    pub fn get_cost_basis(&self) -> Num {
-        self.position.as_ref().unwrap().cost_basis.clone()
-    }
-
-    pub fn get_pnl(&self) -> Num {
-        match self
-            .position
-            .as_ref()
-            .unwrap()
-            .unrealized_gain_total
-            .clone()
-        {
-            Some(val) => val,
+    fn get_pnl(&self, position: &Position) -> Num {
+        match &position.unrealized_gain_total {
+            Some(val) => val.clone(),
             None => to_num!(0.0),
         }
     }
@@ -75,19 +59,10 @@ impl MktPosition {
 
 impl fmt::Display for MktPosition {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let position = self.position.as_ref().unwrap();
         write!(
             f,
             "Position symbol[{}], strategy[{}] avgPrice[{}], size[{}], pnl[{}]",
-            position.symbol,
-            self.strategy,
-            position.current_price.as_ref().unwrap().round_with(2),
-            position.quantity,
-            position
-                .unrealized_gain_total
-                .as_ref()
-                .unwrap()
-                .round_with(2)
+            self.symbol, self.strategy, self.avg_price, self.quantity, self.pnl
         )
     }
 }
@@ -105,16 +80,17 @@ impl MktPositions {
         }
     }
 
-    pub async fn get_position(&self, symbol: &str) -> Result<&MktPosition> {
-        Ok(&self.mktpositions[symbol])
+    pub fn get_position(&self, symbol: &str) -> Option<&MktPosition> {
+        self.mktpositions.get(symbol)
     }
 
-    pub fn insert(&mut self, symbol: &str, strategy: &str, direction: Direction) -> Uuid {
-        let mktpostion = MktPosition::new(symbol, strategy, direction);
-        let local_id = mktpostion.local_id;
-        self.mktpositions.insert(symbol.to_string(), mktpostion);
-        local_id
-    }
+    //TODO after testing remove if neccessary
+    // pub fn insert(&mut self, symbol: &str, strategy: &str, direction: Direction) -> Uuid {
+    //     let mktpostion = MktPosition::new(symbol, strategy, direction);
+    //     let local_id = mktpostion.local_id;
+    //     self.mktpositions.insert(symbol.to_string(), mktpostion);
+    //     local_id
+    // }
 
     pub async fn update_position(&mut self, symbol: &str) -> Result<MktPosition> {
         let position = self.connectors.get_position(symbol).await?;
@@ -123,10 +99,6 @@ impl MktPositions {
         } else {
             bail!("MktPosition key not found in HashMap")
         }
-    }
-
-    pub async fn get_positions(&self) -> &HashMap<String, MktPosition> {
-        &self.mktpositions
     }
 
     pub async fn update_positions(&mut self) -> Result<&HashMap<String, MktPosition>> {
