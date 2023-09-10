@@ -102,7 +102,8 @@ impl<'de> serde::Deserialize<'de> for Side {
 
 #[derive(Debug, Clone)]
 pub enum Source {
-    Email,
+    PubSub,
+    WebHook,
 }
 
 impl<'de> serde::Deserialize<'de> for Source {
@@ -112,7 +113,8 @@ impl<'de> serde::Deserialize<'de> for Source {
     {
         let value: u8 = Deserialize::deserialize(deserializer)?;
         match value {
-            1 => Ok(Source::Email),
+            1 => Ok(Source::PubSub),
+            2 => Ok(Source::WebHook),
             _ => Err(serde::de::Error::custom("Invalid Source value")),
         }
     }

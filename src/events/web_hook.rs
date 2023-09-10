@@ -2,10 +2,12 @@ use std::collections::HashMap;
 use tokio_util::sync::CancellationToken;
 
 use axum::response;
+use axum::routing;
+use axum::Router;
 
+use tower_http::cors::CorsLayer;
 
 use tokio::sync::broadcast::Sender;
-
 
 use tracing::{error, info};
 
@@ -40,7 +42,7 @@ async fn post_event(
         side: Side::Buy,
         action: PortAction::Create,
         direction: Direction::Long,
-        source: Source::Email,
+        source: Source::WebHook,
         price,
         primary_exchange: None,
         is_dirty: None,
@@ -67,21 +69,21 @@ impl WebHook {
         WebHook { shutdown_signal }
     }
 
-    pub async fn run(&mut self, _sender: Sender<Event>) -> Result<()> {
-        // let app = Router::new()
-        //     .route(
-        //         "/v1/mktsignal",
-        //         routing::post(move |body| post_event(sender, body)),
-        //     )
-        //     .layer(CorsLayer::permissive());
+    pub async fn run(&mut self, sender: Sender<Event>) -> Result<()> {
+        let app = Router::new()
+            .route(
+                "/v1/mktsignal",
+                routing::post(move |body| post_event(sender, body)),
+            )
+            .layer(CorsLayer::permissive());
 
-        // let server =
-        //     axum::Server::bind(&"0.0.0.0:496".parse().unwrap()).serve(app.into_make_service());
+        let server =
+            axum::Server::bind(&"0.0.0.0:3333".parse().unwrap()).serve(app.into_make_service());
 
-        // let cancel_request = self.shutdown_signal.clone();
-        // server.with_graceful_shutdown(async {
-        //     cancel_request.cancelled().await;
-        // });
+        let cancel_request = self.shutdown_signal.clone();
+        server.with_graceful_shutdown(async {
+            cancel_request.cancelled().await;
+        });
 
         Ok(())
     }

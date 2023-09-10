@@ -28,15 +28,6 @@ pub struct MktPosition {
 }
 
 impl MktPosition {
-    pub fn new(symbol: &str, strategy: &str, direction: Direction) -> Self {
-        MktPosition {
-            symbol: symbol.into(),
-            strategy: strategy.into(),
-            direction,
-            ..Default::default()
-        }
-    }
-
     pub fn update_inner(&mut self, position: Position) -> &Self {
         let entry_price = position.average_entry_price.clone();
         self.avg_price = match &position.current_price {
@@ -83,14 +74,6 @@ impl MktPositions {
     pub fn get_position(&self, symbol: &str) -> Option<&MktPosition> {
         self.mktpositions.get(symbol)
     }
-
-    //TODO after testing remove if neccessary
-    // pub fn insert(&mut self, symbol: &str, strategy: &str, direction: Direction) -> Uuid {
-    //     let mktpostion = MktPosition::new(symbol, strategy, direction);
-    //     let local_id = mktpostion.local_id;
-    //     self.mktpositions.insert(symbol.to_string(), mktpostion);
-    //     local_id
-    // }
 
     pub async fn update_position(&mut self, symbol: &str) -> Result<MktPosition> {
         let position = self.connectors.get_position(symbol).await?;
