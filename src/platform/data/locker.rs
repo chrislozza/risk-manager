@@ -267,6 +267,7 @@ impl FromRow<'_, PgRow> for TrailingStop {
                 Err(err) => Err(err),
             }
         }
+
         let strategy = row.try_get("strategy")?;
         let symbol = row.try_get("symbol")?;
         let multiplier = row.try_get("multiplier")?;
