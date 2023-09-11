@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::info;
 use tracing::error;
+use tracing::info;
 
 use anyhow::Result;
 
@@ -9,7 +9,7 @@ mod data;
 mod engine;
 mod mktdata;
 mod order_handler;
-mod risk_sizing;
+mod technical_signals;
 mod web_clients;
 
 use engine::Engine;

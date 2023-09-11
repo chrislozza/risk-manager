@@ -9,9 +9,9 @@ use crate::to_num;
 
 use anyhow::Result;
 
-pub struct RiskManagement {}
+pub struct TechnnicalSignals {}
 
-impl RiskManagement {
+impl TechnnicalSignals {
     pub async fn get_atr(symbol: &str, mktdata: &MktData) -> Result<Num> {
         let mut indicator = AverageTrueRange::new(14).unwrap();
 

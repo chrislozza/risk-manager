@@ -5,6 +5,10 @@
   "gcp_log_name": "gcp-log-name",
   "log_level": "info",
   "account_type": "paper",
+  "sizing": {
+    "risk_tolerance": 0.02,
+    "multiplier": 3.5
+  },
   "database": {
     "name": "manual-trader",
     "user": "trader",
@@ -12,19 +16,24 @@
     "host": "gcp-sql-host",
     "password": "xxxx"
   },
+  "stops": {
+    "smart_01": {
+      "locker_type": "pc",
+      "multiplier": 7
+    },
+    "atr_01": {
+      "locker_type": "atr",
+      "multiplier": 5.5
+    }
+  },
   "strategies": {
-    "risk_tolerance": 0.02,
-    "configuration": {
-      "auto01": {
-        "max_positions": 10,
-        "locker_type": "pc",
-        "trailing_size": 7.0
-      },
-      "manual01": {
-        "max_positions": 10,
-        "locker_type": "atr",
-        "trailing_size": 2.0
-      }
+    "auto01": {
+      "max_positions": 10,
+      "locker": "atr_01"
+    },
+    "manual01": {
+      "max_positions": 10,
+      "locker": "smart_01"
     }
   }
 }

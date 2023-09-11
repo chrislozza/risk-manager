@@ -28,13 +28,12 @@ use chrono::Utc;
 pub mod account;
 pub mod assets;
 mod db_client;
-pub mod locker;
+mod locker;
 pub mod mktorder;
 pub mod mktposition;
 
 use super::data::db_client::DBClient;
 use super::data::locker::Locker;
-use super::data::locker::LockerStatus;
 use super::data::locker::TransactionType;
 use super::data::mktorder::MktOrder;
 use super::data::mktorder::MktOrders;
@@ -434,7 +433,9 @@ impl Transactions {
     }
     pub async fn update_stop_entry_price(&mut self, symbol: &str, entry_price: Num) -> Result<()> {
         if let Some(transaction) = self.transactions.get(symbol) {
-            self.locker.update_stop(transaction.locker, entry_price);
+            self.locker
+                .update_stop(transaction.locker, entry_price)
+                .await;
         } else {
             warn!(
                 "Unable to update locker, transaction not found for symbol: {}",
@@ -444,20 +445,7 @@ impl Transactions {
         Ok(())
     }
 
-    pub async fn update_stop_status(&mut self, symbol: &str, status: LockerStatus) -> Result<()> {
-        if let Some(transaction) = self.transactions.get(symbol) {
-            let locker_id = transaction.locker;
-            self.locker.update_status(&locker_id, status).await
-        } else {
-            warn!(
-                "Unable to update locker, transaction not found for symbol: {}",
-                symbol
-            );
-        };
-        Ok(())
-    }
-
-    pub async fn stop_complete(&mut self, symbol: &str) -> Result<()> {
+    pub async fn stop_complete(&mut self, symbol: &str) {
         if let Some(transaction) = self.transactions.get("symbol") {
             self.locker.complete(transaction.locker).await;
         } else {
@@ -466,7 +454,6 @@ impl Transactions {
                 symbol
             );
         };
-        Ok(())
     }
 
     pub async fn add_waiting_transaction(

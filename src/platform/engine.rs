@@ -25,7 +25,6 @@ use uuid::Uuid;
 use super::super::events::MktSignal;
 use super::data::account::AccountDetails;
 use super::data::assets::Assets;
-use super::data::locker::LockerStatus;
 use super::data::TransactionStatus;
 
 use super::data::mktorder::OrderAction;
@@ -33,12 +32,13 @@ use super::data::mktorder::OrderAction;
 use super::data::Transactions;
 use super::mktdata::MktData;
 use super::order_handler::OrderHandler;
-use super::risk_sizing::RiskManagement;
+use super::technical_signals::TechnnicalSignals;
 use super::web_clients::Connectors;
 use super::Event;
 use super::Settings;
 use crate::events::Direction;
 
+use crate::settings::PositionSizing;
 use crate::to_num;
 
 pub struct Engine {
@@ -102,24 +102,13 @@ impl Engine {
             );
             return Ok(());
         }
-        let strategy_cfg = match self
-            .settings
-            .strategies
-            .configuration
-            .get(&mkt_signal.strategy)
-        {
-            Some(strategy) => strategy,
-            _ => {
-                info!("Not subscribed to strategy: {}", mkt_signal.strategy);
-                return Ok(());
-            }
-        };
+        let position_sizing = self.settings.sizing.clone();
         let entry_price = to_num!(mkt_signal.price);
         let size = Self::size_position(
             &mkt_signal.symbol,
             &self.account.equity().await,
-            strategy_cfg.trailing_size,
-            self.settings.strategies.configuration.len(),
+            position_sizing,
+            self.settings.strategies.len(),
             &self.mktdata,
         )
         .await?;
@@ -175,29 +164,29 @@ impl Engine {
     async fn size_position(
         symbol: &str,
         total_equity: &Num,
-        multiplier: f64,
+        sizing: PositionSizing,
         number_of_strategies: usize,
         mktdata: &MktData,
     ) -> Result<Num> {
-        let risk_tolerance = to_num!(0.02);
+        let risk_tolerance = to_num!(sizing.risk_tolerance);
         let total_equity_per_strategy = total_equity / number_of_strategies;
         let risk_per_trade = total_equity_per_strategy * risk_tolerance;
-        let atr = RiskManagement::get_atr(symbol, mktdata).await?;
-        let atr_stop = atr.clone() * to_num!(multiplier);
-        let position_size = risk_per_trade / atr_stop.clone();
-        info!("Position size: {position_size} from equity: {total_equity} with atr: {atr}, atr_stop: {atr_stop}");
+        let atr = TechnnicalSignals::get_atr(symbol, mktdata).await?;
+        let atr_stop = atr.clone() * to_num!(sizing.multiplier);
+        let position_size = risk_per_trade.clone() / atr_stop.clone();
+        info!(
+            "Position size: {} total risk per position: {} with atr: {}, atr_stop: {}",
+            position_size,
+            risk_per_trade.round_with(3).to_string(),
+            atr,
+            atr_stop
+        );
         Ok(position_size)
     }
 
     async fn handle_closing_order(&mut self, symbol: &str, order_id: Uuid) {
-        let stop_status = self.handle_cancel(symbol, order_id).await.unwrap();
-        if let Err(err) = self
-            .transactions
-            .update_stop_status(symbol, stop_status)
-            .await
-        {
-            warn!("Failed to update stop status, error={}", err);
-        }
+        self.handle_cancel(symbol, order_id).await;
+        self.transactions.reactivate_stop(symbol).await
     }
 
     async fn handle_closing_position(
@@ -213,13 +202,7 @@ impl Engine {
         {
             warn!("Failed to add stop order, error={}", err);
         }
-        if let Err(err) = self
-            .transactions
-            .update_stop_status(symbol, LockerStatus::Finished)
-            .await
-        {
-            warn!("Failed to update stop status, error={}", err);
-        }
+        self.transactions.stop_complete(symbol).await
     }
 
     pub async fn mktdata_update(&mut self, mktdata_update: &stream::Quote) {
@@ -239,24 +222,14 @@ impl Engine {
                     let order_id = transaction.orders.first().unwrap().clone();
                     self.handle_closing_order(&symbol, order_id).await
                 }
-                TransactionStatus::Confirmed => {
-                    match self.handle_liquidate(&symbol).await {
-                        Some(order_id) => {
-                            let direction = transaction.direction;
-                            self.handle_closing_position(&symbol, order_id, direction)
-                                .await
-                        }
-                        None => {
-                            if let Err(err) = self
-                                .transactions
-                                .update_stop_status(&symbol, LockerStatus::Active)
-                                .await
-                            {
-                                warn!("Failed to update stop status, error={}", err);
-                            }
-                        }
-                    };
-                }
+                TransactionStatus::Confirmed => match self.handle_liquidate(&symbol).await {
+                    Some(order_id) => {
+                        let direction = transaction.direction;
+                        self.handle_closing_position(&symbol, order_id, direction)
+                            .await
+                    }
+                    None => self.transactions.reactivate_stop(&symbol).await,
+                },
                 TransactionStatus::Cancelled => {
                     warn!("Ignoring mktdata update for cancelled transaction")
                 }
@@ -267,14 +240,14 @@ impl Engine {
         }
     }
 
-    async fn handle_cancel(&self, symbol: &str, order_id: Uuid) -> Result<LockerStatus> {
+    async fn handle_cancel(&mut self, symbol: &str, order_id: Uuid) {
         info!("In handle new for symbol: {symbol}");
         match self.order_handler.cancel_order(&order_id).await {
             Err(error) => {
                 error!("Dropping order cancel, failed to send to server, error={error}");
-                Ok(LockerStatus::Active)
+                self.transactions.reactivate_stop(symbol).await
             }
-            _ => Ok(LockerStatus::Finished),
+            _ => self.transactions.stop_complete(symbol).await,
         }
     }
 
@@ -364,7 +337,7 @@ impl Engine {
                 }
                 OrderAction::Liquidate => {
                     self.mktdata.unsubscribe(&symbol).await?;
-                    self.transactions.stop_complete(&symbol).await?;
+                    self.transactions.stop_complete(&symbol).await;
 
                     self.transactions.close_transaction(order_id).await?
                 }
