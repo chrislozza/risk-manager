@@ -401,12 +401,23 @@ impl Transactions {
     pub async fn activate_stop(&mut self, symbol: &str) {
         if let Some(transaction) = self.transactions.get_mut(symbol) {
             self.locker.revive(transaction.locker);
+        } else {
+            warn!(
+                "Unable to update locker, transaction not found for symbol: {}",
+                symbol
+            );
         }
     }
 
     pub async fn reactivate_stop(&mut self, symbol: &str) {
         if let Some(transaction) = self.transactions.get_mut(symbol) {
             self.locker.revive(transaction.locker);
+            info!("Locker tracking symbol: {} re-enabled", symbol);
+        } else {
+            warn!(
+                "Unable to update locker, transaction not found for symbol: {}",
+                symbol
+            );
         }
     }
     pub async fn update_stop_entry_price(&mut self, symbol: &str, entry_price: Num) -> Result<()> {

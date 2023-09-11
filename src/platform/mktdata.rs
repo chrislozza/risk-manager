@@ -49,21 +49,18 @@ impl MktData {
 
     pub async fn startup(&mut self, symbols: Vec<String>) -> Result<()> {
         if !symbols.is_empty() {
-            let symbols = self.batch_subscribe(symbols).await?;
-
-            if let stream::Symbols::List(list) = symbols {
-                for symbol in list.to_vec() {
-                    self.snapshots
-                        .entry(symbol.to_string())
-                        .or_insert_with(|| to_num!(0.0));
-                }
+            for symbol in &symbols {
+                self.snapshots
+                    .entry(symbol.to_string())
+                    .or_insert_with(|| to_num!(0.0));
             }
+            let _ = self.batch_subscribe(symbols).await?;
         }
         info!("Mktdata startup complete");
         Ok(())
     }
 
-    async fn batch_subscribe(&self, symbols: Vec<String>) -> Result<stream::Symbols> {
+    async fn batch_subscribe(&self, symbols: Vec<String>) -> Result<()> {
         info!("Batch subscribing to symbols {symbols:?}");
         self.connectors.subscribe_to_symbols(symbols.into()).await
     }

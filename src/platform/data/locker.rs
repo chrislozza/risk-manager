@@ -110,7 +110,6 @@ impl Locker {
             status: String,
             db: &Arc<DBClient>,
         ) -> Vec<TrailingStop> {
-            
             match sqlx::query_as::<_, TrailingStop>(&stmt)
                 .bind(status)
                 .fetch_all(&db.pool)
@@ -190,7 +189,6 @@ impl Locker {
 
     pub fn revive(&mut self, locker_id: Uuid) {
         if let Some(stop) = self.stops.get_mut(&locker_id) {
-            info!("Locker tracking symbol: {} re-enabled", stop.symbol);
             stop.status = LockerStatus::Active;
         }
     }
