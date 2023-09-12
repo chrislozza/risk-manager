@@ -194,7 +194,13 @@ impl Locker {
     }
 
     pub fn get_transaction_type(&mut self, locker_id: &Uuid) -> TransactionType {
-        self.stops[locker_id].transact_type
+        match self.stops.get(locker_id) {
+            Some(stop) => stop.transact_type,
+            None => {
+                warn!("Can't find locker with locker_id: {}", locker_id);
+                panic!("locker id lookup failed {}", locker_id)
+            }
+        }
     }
 
     pub fn print_stop(&mut self, locker_id: &Uuid) -> String {

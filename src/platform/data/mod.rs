@@ -467,14 +467,18 @@ impl Transactions {
         let transaction =
             Transaction::new(symbol, strategy, direction, entry_price, &self.db).await?;
         self.transactions.insert(symbol.to_string(), transaction);
+        info!(
+            "Strategy[{}] symbol[{}] added a waiting transaction",
+            strategy, symbol
+        );
         Ok(())
     }
 
     pub async fn update_transaction(&mut self, order_id: Uuid) -> Result<()> {
         let order = self.update_order(order_id).await?;
-        let symbol = &order.symbol;
-        let mktposition = self.update_position(symbol).await;
-        if let Some(transaction) = self.transactions.get_mut(symbol) {
+        let symbol = order.symbol.clone();
+        let mktposition = self.update_position(&symbol).await;
+        if let Some(transaction) = self.transactions.get_mut(&symbol) {
             transaction.update_from_order(&order);
             if let anyhow::Result::Ok(position) = mktposition {
                 transaction.update_from_position(&position);

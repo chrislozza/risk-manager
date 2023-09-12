@@ -1,3 +1,4 @@
+use anyhow::Ok;
 use apca::api::v2::updates;
 use apca::data::v2::stream;
 use apca::data::v2::stream::MarketData;
@@ -9,6 +10,7 @@ use tracing::error;
 use tracing::info;
 use tracing::warn;
 
+use anyhow::bail;
 use anyhow::Result;
 
 use tokio::sync::broadcast;
@@ -37,7 +39,6 @@ pub struct SubscriptPayload {
 pub(crate) struct WebSocket {
     event_publisher: broadcast::Sender<Event>,
     subscript_publisher: broadcast::Sender<SubscriptPayload>,
-    not_initialised: bool,
     shutdown_signal: CancellationToken,
 }
 
@@ -50,112 +51,114 @@ impl WebSocket {
         WebSocket {
             event_publisher,
             subscript_publisher: publisher,
-            not_initialised: true,
             shutdown_signal,
         }
     }
 
-    pub async fn subscribe_to_mktdata(
-        &self,
-        client: &Client,
-        symbols: stream::SymbolList,
-        subscript_type: SubscriptType,
-    ) -> Result<()> {
+    pub async fn startup(&self, client: &Client) -> Result<()> {
+        if let Err(err) = self.subscribe_to_data_stream(client).await {
+            bail!("{:?}", err)
+        }
+
+        if let Err(err) = self.subscribe_to_order_updates(client).await {
+            bail!("{:?}", err)
+        }
+        Ok(())
+    }
+
+    pub async fn subscribe_to_mktdata(&self, symbols: stream::SymbolList) -> Result<()> {
         let mut data = stream::MarketData::default();
         data.set_trades(symbols);
 
-        if !self.not_initialised {
-            let _ = match subscript_type {
-                SubscriptType::Subscribe => self
-                    .subscript_publisher
-                    .send(SubscriptPayload {
-                        action: SubscriptType::Subscribe,
-                        data,
-                    })
-                    .unwrap(),
-                SubscriptType::Unsubscribe => self
-                    .subscript_publisher
-                    .send(SubscriptPayload {
-                        action: SubscriptType::Unsubscribe,
-                        data,
-                    })
-                    .unwrap(),
-            };
-        } else {
-            let subscript_publisher = self.subscript_publisher.clone();
-            let mut subscript_subscriber = subscript_publisher.subscribe();
-            let event_publisher = self.event_publisher.clone();
-            let shutdown_signal = self.shutdown_signal.clone();
+        let _ = self
+            .subscript_publisher
+            .send(SubscriptPayload {
+                action: SubscriptType::Subscribe,
+                data,
+            })
+            .unwrap();
+        Ok(())
+    }
 
-            let (mut stream, mut subscription) = client
-                .subscribe::<stream::RealtimeData<stream::IEX>>()
-                .await
-                .unwrap();
+    pub async fn unsubscribe_to_mktdata(&self, symbols: stream::SymbolList) -> Result<()> {
+        let mut data = stream::MarketData::default();
+        data.set_trades(symbols);
 
-            tokio::spawn(async move {
-                let subscribe = subscription.subscribe(&data).boxed().fuse();
+        let _ = self
+            .subscript_publisher
+            .send(SubscriptPayload {
+                action: SubscriptType::Unsubscribe,
+                data,
+            })
+            .unwrap();
+        Ok(())
+    }
 
-                if let Err(error) = stream::drive(subscribe, &mut stream)
-                    .await
-                    .unwrap()
-                    .unwrap()
-                {
-                    error!("Subscribe error in the stream drive: {error:?}");
-                    shutdown_signal.cancel();
-                    return;
-                }
-                let mut retries = 5;
-                loop {
-                    tokio::select! {
-                        event = subscript_subscriber.recv() => {
-                            match event {
-                                Ok(SubscriptPayload { action, data }) => {
-                                    let subscribe = match action {
-                                        SubscriptType::Subscribe => subscription.subscribe(&data).boxed().fuse(),
-                                        SubscriptType::Unsubscribe => subscription.unsubscribe(&data).boxed().fuse()
+    async fn subscribe_to_data_stream(&self, client: &Client) -> Result<()> {
+        let mut subscript_subscriber = self.subscript_publisher.subscribe();
+        let event_publisher = self.event_publisher.clone();
+        let shutdown_signal = self.shutdown_signal.clone();
 
-                                    };
-                                    match stream::drive(subscribe, &mut stream).await.unwrap().unwrap() {
-                                        Err(err) =>
-                                        {
-                                            error!("Subscribe error in the stream drive: {err:?}");
-                                            shutdown_signal.cancel();
-                                            break
-                                        }
-                                        _ => ()
+        let (mut stream, mut subscription) = client
+            .subscribe::<stream::RealtimeData<stream::IEX>>()
+            .await
+            .unwrap();
+
+        tokio::spawn(async move {
+            let mut retries = 5;
+            loop {
+                tokio::select! {
+                    event = subscript_subscriber.recv() => {
+                        match event {
+                            std::result::Result::Ok(SubscriptPayload { action, data }) => {
+                                let subscribe = match action {
+                                    SubscriptType::Subscribe => subscription.subscribe(&data).boxed().fuse(),
+                                    SubscriptType::Unsubscribe => subscription.unsubscribe(&data).boxed().fuse()
+
+                                };
+                                match stream::drive(subscribe, &mut stream).await.unwrap().unwrap() {
+                                    Err(err) =>
+                                    {
+                                        error!("Subscribe error in the stream drive: {err:?}");
+                                        shutdown_signal.cancel();
+                                        break
                                     }
-                                }
-                                Err(RecvError::Lagged(err)) => warn!("Publisher channel skipping a number of messages: {}", err),
-                                Err(RecvError::Closed) => {
-                                    error!("Publisher channel closed");
-                                    shutdown_signal.cancel();
-                                    break
+                                    _ => ()
                                 }
                             }
-                        },
-                        data = stream.next() => {
-                            let event = match data.unwrap().unwrap().unwrap() {
-                                stream::Data::Trade(data) => Event::Trade(data),
-                                _ => return,
-                            };
-                            match event_publisher.send(event) {
-                                Err(broadcast::error::SendError(data)) => {
-                                    error!("{data:?}");
-                                    match retries {
-                                        0 => shutdown_signal.cancel(),
-                                        _ => retries -= 1
-                                    }
+                            Err(RecvError::Lagged(err)) => warn!("Publisher channel skipping a number of messages: {}", err),
+                            Err(RecvError::Closed) => {
+                                error!("Publisher channel closed");
+                                shutdown_signal.cancel();
+                                break
+                            }
+                        }
+                    },
+                    data = stream.next() => {
+                        let event = match data.unwrap().unwrap().unwrap() {
+                            stream::Data::Trade(data) => Event::Trade(data),
+                            _ => return,
+                        };
+                        match event_publisher.send(event) {
+                            Err(broadcast::error::SendError(data)) => {
+                                error!("{data:?}");
+                                match retries {
+                                    0 => {
+                                        error!("Max retries reached, closing app");
+                                        shutdown_signal.cancel()
+                                    },
+                                    _ => retries -= 1
                                 }
-                                Ok(_) => retries = 5,
-                            };
-                        }
-                        _ = shutdown_signal.cancelled() => {
-                            break
-                        }
+                            }
+                            std::result::Result::Ok(_) => retries = 5,
+                        };
+                    }
+                    _ = shutdown_signal.cancelled() => {
+                        break
                     }
                 }
-            });
-        }
+            }
+        });
         Ok(())
     }
 
@@ -163,7 +166,7 @@ impl WebSocket {
         let (mut stream, _subscription) =
             client.subscribe::<updates::OrderUpdates>().await.unwrap();
 
-        let subscriber = self.event_publisher.clone();
+        let event_publisher = self.event_publisher.clone();
         let shutdown_signal = self.shutdown_signal.clone();
         tokio::spawn(async move {
             info!("In task listening for order updates");
@@ -180,11 +183,11 @@ impl WebSocket {
                                 let updates::OrderUpdate { event, order } = data;
                                 let event =
                                     Event::OrderUpdate(updates::OrderUpdate { event, order });
-                                match subscriber.send(event) {
+                                match event_publisher.send(event) {
                                     Err(broadcast::error::SendError(error)) => {
                                         error!("Sending error {error:?}");
                                     }
-                                    Ok(_) => {
+                                    std::result::Result::Ok(_) => {
                                         retry_count = 5.into();
                                     }
                                 }

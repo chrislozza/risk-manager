@@ -78,7 +78,9 @@ impl Engine {
     pub async fn startup(&mut self) -> Result<()> {
         info!("Downloading orders and positions in engine startup");
         self.transactions.startup().await?;
-        self.assets.startup().await
+        self.assets.startup().await?;
+        self.connectors.startup().await?;
+        Ok(())
     }
 
     pub async fn create_position(&mut self, mkt_signal: &MktSignal) -> Result<()> {
@@ -141,6 +143,10 @@ impl Engine {
                 self.transactions
                     .add_order(symbol, order_id, direction, OrderAction::Create)
                     .await?;
+                info!(
+                    "Strategy[{}] symbol[{}] added a waiting order",
+                    strategy, symbol
+                );
                 self.transactions
                     .add_stop(symbol, strategy, entry_price)
                     .await

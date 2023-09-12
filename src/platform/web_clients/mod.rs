@@ -64,6 +64,10 @@ impl Connectors {
         }))
     }
 
+    pub async fn startup(&self) -> Result<()> {
+        self.websocket.startup(&self.client).await
+    }
+
     pub fn get_subscriber(&self) -> broadcast::Receiver<Event> {
         self.publisher.subscribe()
     }
@@ -186,22 +190,14 @@ impl Connectors {
     }
 
     pub async fn subscribe_to_symbols(&self, symbols: stream::SymbolList) -> Result<()> {
-        match self
-            .websocket
-            .subscribe_to_mktdata(&self.client, symbols, websocket::SubscriptType::Subscribe)
-            .await
-        {
+        match self.websocket.subscribe_to_mktdata(symbols).await {
             Err(err) => bail!("Call to subscribe_to_symbols failed, error={}", err),
             val => val,
         }
     }
 
     pub async fn unsubscribe_from_symbols(&self, symbols: stream::SymbolList) -> Result<()> {
-        match self
-            .websocket
-            .subscribe_to_mktdata(&self.client, symbols, websocket::SubscriptType::Unsubscribe)
-            .await
-        {
+        match self.websocket.unsubscribe_to_mktdata(symbols).await {
             Err(err) => bail!("Call to unsubscribe_from_symbols failed, error={}", err),
             val => val,
         }

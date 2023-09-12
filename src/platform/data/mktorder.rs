@@ -93,7 +93,7 @@ impl MktOrder {
         db: Option<&Arc<DBClient>>,
     ) -> Result<Self> {
         let mut order = MktOrder {
-            local_id: order_id,
+            local_id: Uuid::nil(),
             strategy: strategy.to_string(),
             symbol: symbol.to_string(),
             direction,
@@ -101,12 +101,12 @@ impl MktOrder {
             ..Default::default()
         };
         if let Some(db) = db {
-            order.persist_db(db.clone()).await?;
+            let _ = order.persist_db(db.clone(), Some(order_id)).await?;
         }
         Ok(order)
     }
 
-    async fn persist_db(&mut self, db: Arc<DBClient>) -> Result<()> {
+    async fn persist_db(&mut self, db: Arc<DBClient>, local_id: Option<Uuid>) -> Result<()> {
         let columns = vec![
             "action",
             "strategy",
@@ -130,8 +130,8 @@ impl MktOrder {
         }
 
         let stmt = get_sql_stmt(&self.local_id, columns, &db);
-        if Uuid::is_nil(&self.local_id) {
-            self.local_id = Uuid::new_v4();
+        if let Some(local_id) = local_id {
+            self.local_id = local_id;
         }
 
         if let Err(err) = sqlx::query(&stmt)
@@ -152,7 +152,7 @@ impl MktOrder {
         Ok(())
     }
 
-    fn update_inner(&mut self, order: order::Order) -> &Self {
+    async fn update_inner(&mut self, order: order::Order, db: Arc<DBClient>) -> Result<&Self> {
         if let Some(price) = order.limit_price {
             self.entry_price = price
         }
@@ -168,8 +168,9 @@ impl MktOrder {
         if let order::Amount::Quantity { quantity } = order.amount {
             self.quantity = quantity;
         }
+        self.persist_db(db, None).await?;
         info!("Updating mktorder {}", self);
-        self
+        Ok(self)
     }
 }
 
@@ -243,8 +244,7 @@ impl MktOrders {
         )
         .await?;
         let order = self.connectors.get_order(order_id).await?;
-        mktorder.update_inner(order);
-        mktorder.persist_db(self.db.clone()).await?;
+        let _ = mktorder.update_inner(order, self.db.clone()).await?;
 
         self.mktorders.insert(order_id, mktorder.clone());
         Ok(mktorder)
@@ -253,9 +253,7 @@ impl MktOrders {
     pub async fn update_order(&mut self, order_id: &Uuid) -> Result<MktOrder> {
         let order = self.connectors.get_order(*order_id).await?;
         if let Some(mktorder) = self.mktorders.get_mut(order_id) {
-            mktorder.update_inner(order);
-            mktorder.persist_db(self.db.clone()).await?;
-            Ok(mktorder.clone())
+            Ok(mktorder.update_inner(order, self.db.clone()).await?.clone())
         } else {
             bail!(
                 "MktOrder {} with order_id: {} not found",
@@ -273,8 +271,7 @@ impl MktOrders {
         let orders = self.connectors.get_orders().await?;
         for order in &orders {
             if let Some(mktorder) = self.mktorders.get_mut(&order.id.0) {
-                mktorder.update_inner(order.clone());
-                mktorder.persist_db(self.db.clone()).await?;
+                let _ = mktorder.update_inner(order.clone(), self.db.clone());
             }
         }
         Ok(&self.mktorders)
