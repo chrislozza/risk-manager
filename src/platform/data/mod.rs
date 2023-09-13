@@ -1,5 +1,6 @@
 use anyhow::Ok;
 
+use tracing::debug;
 use tracing::error;
 use tracing::info;
 use tracing::warn;
@@ -40,6 +41,7 @@ use super::data::mktorder::MktOrders;
 use super::data::mktorder::OrderAction;
 use super::data::mktposition::MktPosition;
 use super::data::mktposition::MktPositions;
+use super::mktdata::Snapshot;
 use super::web_clients::Connectors;
 
 use crate::Settings;
@@ -353,11 +355,10 @@ impl Transactions {
     }
 
     pub async fn print_active_transactions(&mut self) -> Result<()> {
-        info!("Printing active orders");
         let _ = self.mktpositions.update_positions().await?;
         let _ = self.mktorders.update_orders().await?;
 
-        info!("Printing confirmed transactions");
+        info!("Printing transactions");
         for transaction in self.transactions.values() {
             match transaction.status {
                 TransactionStatus::Cancelled | TransactionStatus::Waiting => {
@@ -546,10 +547,6 @@ impl Transactions {
         self.mktorders.get_order(order_id)
     }
 
-    pub fn get_transaction(&self, symbol: &str) -> Option<&Transaction> {
-        self.transactions.get(symbol)
-    }
-
     pub async fn add_order(
         &mut self,
         symbol: &str,
@@ -574,21 +571,27 @@ impl Transactions {
         Ok(())
     }
 
-    pub async fn has_stop_crossed(
+    pub async fn find_transactions_to_close(
         &mut self,
-        symbol: &str,
-        last_price: &Num,
-    ) -> (bool, TransactionType) {
-        if let Some(transaction) = self.transactions.get_mut(symbol) {
-            let locker_id = transaction.locker;
-            info!(
+        snapshots: &HashMap<String, Snapshot>,
+    ) -> Vec<Transaction> {
+        let mut to_close: Vec<Transaction> = Vec::new();
+        for transaction in self.transactions.values() {
+            let symbol = &transaction.symbol;
+            debug!(
                 "Checking has stop crossed before has transaction type symbol: {}",
                 symbol
             );
-            let transaction_type = self.locker.get_transaction_type(&locker_id);
-            let should_close = self.locker.should_close(&locker_id, last_price).await;
-            return (should_close, transaction_type);
+            if let Some(snapshot) = snapshots.get(symbol) {
+                if self
+                    .locker
+                    .should_close(&transaction.locker, &snapshot.last_price)
+                    .await
+                {
+                    to_close.push(transaction.clone());
+                }
+            }
         }
-        (false, TransactionType::Order)
+        to_close
     }
 }

@@ -1,7 +1,6 @@
-use std::cmp;
-
 use ta::indicators::AverageTrueRange;
-use ta::{DataItem, Next};
+use ta::DataItem;
+use ta::Next;
 
 use num_decimal::Num;
 
@@ -13,17 +12,6 @@ use anyhow::Result;
 pub struct RiskManagement {}
 
 impl RiskManagement {
-    pub fn get_port_weight(
-        buying_power: Num,
-        _portfolio_size: Num,
-        gross_position: Num,
-        equity_with_loan: Num,
-    ) -> Num {
-        let max_port_weight = ((buying_power + gross_position) / equity_with_loan)
-            / Num::new((1.05 * 100.00) as i32, 100);
-        cmp::min(max_port_weight, Num::from(2))
-    }
-
     pub async fn get_atr(symbol: &str, mktdata: &MktData) -> Result<Num> {
         let mut indicator = AverageTrueRange::new(14).unwrap();
 

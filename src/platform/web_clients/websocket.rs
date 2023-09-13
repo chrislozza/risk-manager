@@ -105,7 +105,6 @@ impl WebSocket {
             .unwrap();
 
         tokio::spawn(async move {
-            let mut retries = 5;
             loop {
                 tokio::select! {
                     event = subscript_subscriber.recv() => {
@@ -114,7 +113,8 @@ impl WebSocket {
                                 let subscribe = match action {
                                     SubscriptType::Subscribe => {
                                         info!("Received subscribed for symbol list: {:?}", data);
-                                        subscription.subscribe(&data).boxed().fuse()},
+                                        subscription.subscribe(&data).boxed().fuse()
+                                    },
                                     SubscriptType::Unsubscribe => {
                                         info!("Received unsubscribed for symbol list: {:?}", data);
                                         subscription.unsubscribe(&data).boxed().fuse()
@@ -140,23 +140,31 @@ impl WebSocket {
                         }
                     },
                     data = stream.next() => {
-                        let event = match data.unwrap().unwrap().unwrap() {
-                            stream::Data::Trade(data) => Event::Trade(data),
-                            _ => return,
-                        };
-                        match event_publisher.send(event) {
-                            Err(broadcast::error::SendError(data)) => {
-                                error!("{data:?}");
-                                match retries {
-                                    0 => {
-                                        error!("Max retries reached, closing app");
-                                        shutdown_signal.cancel()
-                                    },
-                                    _ => retries -= 1
+                        let publisher = event_publisher.clone();
+                        let shutdown = shutdown_signal.clone();
+                        tokio::spawn(async move {
+                            let event = match data.unwrap().unwrap().unwrap() {
+                                stream::Data::Trade(data) => Event::Trade(data),
+                                _ => return,
+                            };
+                            let mut retries = 5;
+                            loop {
+                                match publisher.send(event.clone()) {
+                                    Err(broadcast::error::SendError(data)) => {
+                                        error!("{data:?}");
+                                        match retries {
+                                            0 => {
+                                                error!("Max retries reached, closing app");
+                                                shutdown.cancel();
+                                                break
+                                            },
+                                            _ => retries -= 1
+                                        }
+                                    }
+                                    std::result::Result::Ok(_) => break,
                                 }
                             }
-                            std::result::Result::Ok(_) => retries = 5,
-                        };
+                        });
                     }
                     _ = shutdown_signal.cancelled() => {
                         break

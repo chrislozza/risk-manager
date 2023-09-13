@@ -1,6 +1,7 @@
 use apca::data::v2::bars;
 use apca::data::v2::stream;
 
+use chrono::DateTime;
 use chrono::Duration;
 use chrono::Utc;
 use std::collections::HashMap;
@@ -14,11 +15,34 @@ use num_decimal::Num;
 use std::vec::Vec;
 
 use super::web_clients::Connectors;
-use crate::to_num;
+
+#[derive(Default, Debug, Clone)]
+pub struct Snapshot {
+    pub last_price: Num,
+    pub last_seen: DateTime<Utc>,
+}
+
+impl Snapshot {
+    pub fn new(last_price: Num) -> Self {
+        Snapshot {
+            last_price,
+            last_seen: Utc::now(),
+        }
+    }
+
+    pub fn is_periodic_check(&mut self) -> bool {
+        let now = Utc::now();
+        if now < self.last_seen + Duration::seconds(5) {
+            self.last_seen = now;
+            return true;
+        }
+        false
+    }
+}
 
 pub struct MktData {
     connectors: Arc<Connectors>,
-    snapshots: HashMap<String, Num>,
+    snapshots: HashMap<String, Option<Snapshot>>,
 }
 
 impl MktData {
@@ -52,7 +76,7 @@ impl MktData {
             for symbol in &symbols {
                 self.snapshots
                     .entry(symbol.to_string())
-                    .or_insert_with(|| to_num!(0.0));
+                    .or_insert_with(|| None);
             }
             let _ = self.batch_subscribe(symbols).await?;
         }
@@ -68,26 +92,41 @@ impl MktData {
     pub async fn subscribe(&mut self, symbol: &str) -> Result<()> {
         let symbols = vec![symbol.to_string()];
         let _ = self.batch_subscribe(symbols).await?;
-        self.snapshots.insert(symbol.to_string(), to_num!(0.0));
+        self.snapshots.insert(symbol.to_string(), None);
         Ok(())
     }
 
     pub async fn unsubscribe(&mut self, symbol: &str) -> Result<()> {
+        info!("Unsubscribing from market data for symbol: {}", symbol);
         let _ = self
             .connectors
             .unsubscribe_from_symbols(vec![symbol.to_string()].into())
             .await?;
         self.snapshots.remove(symbol);
-        Ok(())
+        std::result::Result::Ok(())
     }
 
-    pub fn get_snapshots(&self) -> HashMap<String, Num> {
-        self.snapshots.clone()
+    pub fn get_snapshots(&mut self) -> HashMap<String, Snapshot> {
+        let mut to_check = HashMap::default();
+        for (symbol, snapshot) in &mut self.snapshots {
+            if let Some(snapshot) = snapshot {
+                if snapshot.is_periodic_check() {
+                    to_check.insert(symbol.clone(), snapshot.clone());
+                }
+            }
+        }
+        to_check
     }
 
     pub fn capture_data(&mut self, mktdata_update: &stream::Trade) {
         let symbol = &mktdata_update.symbol;
-        self.snapshots
-            .insert(symbol.clone(), mktdata_update.trade_price.clone());
+        let last_price = mktdata_update.trade_price.clone();
+        match &mut self.snapshots.get_mut(symbol).unwrap() {
+            Some(snapshot) => snapshot.last_price = last_price,
+            None => {
+                let snapshot = Snapshot::new(last_price);
+                self.snapshots.insert(symbol.clone(), Some(snapshot));
+            }
+        }
     }
 }

@@ -26,7 +26,7 @@ use super::super::events::MktSignal;
 use super::data::account::AccountDetails;
 use super::data::assets::Assets;
 use super::data::locker::LockerStatus;
-use super::data::locker::TransactionType;
+use super::data::TransactionStatus;
 
 use super::data::mktorder::OrderAction;
 
@@ -37,6 +37,7 @@ use super::risk_sizing::RiskManagement;
 use super::web_clients::Connectors;
 use super::Event;
 use super::Settings;
+use crate::events::Direction;
 
 use crate::to_num;
 
@@ -181,63 +182,81 @@ impl Engine {
         Ok(position_size)
     }
 
+    async fn handle_closing_order(&mut self, symbol: &str, order_id: Uuid) {
+        let stop_status = self.handle_cancel(symbol, order_id).await.unwrap();
+        if let Err(err) = self
+            .transactions
+            .update_stop_status(symbol, stop_status)
+            .await
+        {
+            warn!("Failed to update stop status, error={}", err);
+        }
+    }
+
+    async fn handle_closing_position(
+        &mut self,
+        symbol: &str,
+        order_id: Uuid,
+        direction: Direction,
+    ) {
+        if let Err(err) = self
+            .transactions
+            .add_order(symbol, order_id, direction, OrderAction::Liquidate)
+            .await
+        {
+            warn!("Failed to add stop order, error={}", err);
+        }
+        if let Err(err) = self
+            .transactions
+            .update_stop_status(symbol, LockerStatus::Finished)
+            .await
+        {
+            warn!("Failed to update stop status, error={}", err);
+        }
+    }
+
     pub async fn mktdata_update(&mut self, mktdata_update: &stream::Trade) {
-        self.mktdata.capture_data(mktdata_update);
+        self.mktdata.capture_data(mktdata_update)
     }
 
     pub async fn mktdata_publish(&mut self) {
         let snapshots = self.mktdata.get_snapshots();
-        for (symbol, last_price) in &snapshots {
-            let (has_crossed, transaction_type) =
-                self.transactions.has_stop_crossed(symbol, last_price).await;
-            if !has_crossed {
-                continue;
-            }
-            if let Some(transaction) = self.transactions.get_transaction(symbol) {
-                match transaction_type {
-                    TransactionType::Order => {
-                        let order_id = transaction.orders[0];
-                        let stop_status = self.handle_cancel(symbol, order_id).await.unwrap();
-                        if let Err(err) = self
-                            .transactions
-                            .update_stop_status(symbol, stop_status)
-                            .await
-                        {
-                            warn!("Failed to update stop status, error={}", err);
+        let to_close = self
+            .transactions
+            .find_transactions_to_close(&snapshots)
+            .await;
+        for transaction in &to_close {
+            let symbol = transaction.symbol.clone();
+            match transaction.status {
+                TransactionStatus::Waiting => {
+                    let order_id = transaction.orders.first().unwrap().clone();
+                    self.handle_closing_order(&symbol, order_id).await
+                }
+                TransactionStatus::Confirmed => {
+                    match self.handle_liquidate(&symbol).await {
+                        Some(order_id) => {
+                            let direction = transaction.direction;
+                            self.handle_closing_position(&symbol, order_id, direction)
+                                .await
                         }
-                    }
-                    TransactionType::Position => {
-                        match self.handle_liquidate(symbol).await {
-                            Some(order_id) => {
-                                let direction = transaction.direction;
-                                if let Err(err) = self
-                                    .transactions
-                                    .add_order(symbol, order_id, direction, OrderAction::Liquidate)
-                                    .await
-                                {
-                                    warn!("Failed to add stop order, error={}", err);
-                                }
-                                if let Err(err) = self
-                                    .transactions
-                                    .update_stop_status(symbol, LockerStatus::Finished)
-                                    .await
-                                {
-                                    warn!("Failed to update stop status, error={}", err);
-                                }
+                        None => {
+                            if let Err(err) = self
+                                .transactions
+                                .update_stop_status(&symbol, LockerStatus::Active)
+                                .await
+                            {
+                                warn!("Failed to update stop status, error={}", err);
                             }
-                            None => {
-                                if let Err(err) = self
-                                    .transactions
-                                    .update_stop_status(symbol, LockerStatus::Active)
-                                    .await
-                                {
-                                    warn!("Failed to update stop status, error={}", err);
-                                }
-                            }
-                        };
-                    }
-                };
-            }
+                        }
+                    };
+                }
+                TransactionStatus::Cancelled => {
+                    warn!("Ignoring mktdata update for cancelled transaction")
+                }
+                TransactionStatus::Complete => {
+                    warn!("Ignoring mktdata update for complete transaction")
+                }
+            };
         }
     }
 
