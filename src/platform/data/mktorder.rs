@@ -263,7 +263,7 @@ impl MktOrders {
         }
     }
 
-    pub async fn get_order(&self, order_id: &Uuid) -> Option<&MktOrder> {
+    pub fn get_order(&self, order_id: &Uuid) -> Option<&MktOrder> {
         self.mktorders.get(order_id)
     }
 

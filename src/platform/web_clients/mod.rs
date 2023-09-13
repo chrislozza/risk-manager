@@ -199,7 +199,7 @@ impl Connectors {
     pub async fn unsubscribe_from_symbols(&self, symbols: stream::SymbolList) -> Result<()> {
         match self.websocket.unsubscribe_to_mktdata(symbols).await {
             Err(err) => bail!("Call to unsubscribe_from_symbols failed, error={}", err),
-            val => val,
+            anyhow::Result::Ok(val) => Ok(val),
         }
     }
 

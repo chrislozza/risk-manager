@@ -355,15 +355,25 @@ impl Transactions {
     pub async fn print_active_transactions(&mut self) -> Result<()> {
         info!("Printing active orders");
         let _ = self.mktpositions.update_positions().await?;
-        let orders = self.mktorders.update_orders().await?;
-        for order in orders.values() {
-            info!("{:?}", order);
-        }
+        let _ = self.mktorders.update_orders().await?;
+
         info!("Printing confirmed transactions");
         for transaction in self.transactions.values() {
-            if let Some(position) = self.mktpositions.get_position(&transaction.symbol) {
-                let stop = self.locker.print_stop(&transaction.locker);
-                info!("{} {}", position, stop);
+            match transaction.status {
+                TransactionStatus::Cancelled | TransactionStatus::Waiting => {
+                    if let Some(order) = self
+                        .mktorders
+                        .get_order(&transaction.orders.first().unwrap())
+                    {
+                        info!("{:?}", order);
+                    }
+                }
+                _ => {
+                    if let Some(position) = self.mktpositions.get_position(&transaction.symbol) {
+                        let stop = self.locker.print_stop(&transaction.locker);
+                        info!("{} {}", position, stop);
+                    }
+                }
             }
         }
         Ok(())
@@ -517,6 +527,7 @@ impl Transactions {
     pub async fn cancel_transaction(&mut self, order_id: Uuid) -> Result<()> {
         let order = self.update_order(order_id).await?;
         let symbol = order.symbol.clone();
+        info!("Transaction complete for symbol: {}", symbol);
         if let Some(transaction) = self.transactions.get_mut(&symbol) {
             transaction
                 .transaction_complete(&order, None, TransactionStatus::Cancelled, &self.db)
@@ -532,7 +543,7 @@ impl Transactions {
     }
 
     pub async fn get_order(&self, order_id: &Uuid) -> Option<&MktOrder> {
-        self.mktorders.get_order(order_id).await
+        self.mktorders.get_order(order_id)
     }
 
     pub fn get_transaction(&self, symbol: &str) -> Option<&Transaction> {
@@ -570,6 +581,10 @@ impl Transactions {
     ) -> (bool, TransactionType) {
         if let Some(transaction) = self.transactions.get_mut(symbol) {
             let locker_id = transaction.locker;
+            info!(
+                "Checking has stop crossed before has transaction type symbol: {}",
+                symbol
+            );
             let transaction_type = self.locker.get_transaction_type(&locker_id);
             let should_close = self.locker.should_close(&locker_id, last_price).await;
             return (should_close, transaction_type);

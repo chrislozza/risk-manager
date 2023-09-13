@@ -112,8 +112,13 @@ impl WebSocket {
                         match event {
                             std::result::Result::Ok(SubscriptPayload { action, data }) => {
                                 let subscribe = match action {
-                                    SubscriptType::Subscribe => subscription.subscribe(&data).boxed().fuse(),
-                                    SubscriptType::Unsubscribe => subscription.unsubscribe(&data).boxed().fuse()
+                                    SubscriptType::Subscribe => {
+                                        info!("Received subscribed for symbol list: {:?}", data);
+                                        subscription.subscribe(&data).boxed().fuse()},
+                                    SubscriptType::Unsubscribe => {
+                                        info!("Received unsubscribed for symbol list: {:?}", data);
+                                        subscription.unsubscribe(&data).boxed().fuse()
+                                    }
 
                                 };
                                 match stream::drive(subscribe, &mut stream).await.unwrap().unwrap() {

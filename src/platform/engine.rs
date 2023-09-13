@@ -289,11 +289,15 @@ impl Engine {
             let action = order.action;
 
             match action {
-                OrderAction::Create => {
-                    self.transactions.cancel_transaction(order_id).await?;
-                }
+                OrderAction::Create => match self.transactions.cancel_transaction(order_id).await {
+                    Err(err) => {
+                        error!("Failed to cancel transaction, error={}", err);
+                        bail!("{}", err)
+                    }
+                    _ => self.mktdata.unsubscribe(&symbol).await?,
+                },
                 OrderAction::Liquidate => self.transactions.reactivate_stop(&symbol).await,
-            };
+            }
         } else {
             warn!("Order with Id: {}, not found in db", order_id);
         }
@@ -381,7 +385,6 @@ impl Engine {
                             _ => ()
                         }
                     }
-                    //smooth market data updates to avoid reacting to spikes
                     _ = mktdata_publish_interval.tick() => {
                         debug!("Publish mktdata snapshots");
                         let _ = engine.lock().await.mktdata_publish().await;
