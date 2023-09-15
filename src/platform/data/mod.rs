@@ -366,7 +366,8 @@ impl Transactions {
                         .mktorders
                         .get_order(&transaction.orders.first().unwrap())
                     {
-                        info!("{:?}", order);
+                        let stop = self.locker.print_stop(&transaction.locker);
+                        info!("{} {}", order, stop);
                     }
                 }
                 _ => {
@@ -411,7 +412,7 @@ impl Transactions {
 
     pub async fn activate_stop(&mut self, symbol: &str) {
         if let Some(transaction) = self.transactions.get_mut(symbol) {
-            self.locker.revive(transaction.locker);
+            self.locker.revive(transaction.locker).await;
         } else {
             warn!(
                 "Unable to update locker, transaction not found for symbol: {}",
@@ -422,7 +423,7 @@ impl Transactions {
 
     pub async fn reactivate_stop(&mut self, symbol: &str) {
         if let Some(transaction) = self.transactions.get_mut(symbol) {
-            self.locker.revive(transaction.locker);
+            self.locker.revive(transaction.locker).await;
             info!("Locker tracking symbol: {} re-enabled", symbol);
         } else {
             warn!(
@@ -446,7 +447,7 @@ impl Transactions {
     pub async fn update_stop_status(&mut self, symbol: &str, status: LockerStatus) -> Result<()> {
         if let Some(transaction) = self.transactions.get(symbol) {
             let locker_id = transaction.locker;
-            self.locker.update_status(&locker_id, status)
+            self.locker.update_status(&locker_id, status).await
         } else {
             warn!(
                 "Unable to update locker, transaction not found for symbol: {}",
@@ -483,6 +484,10 @@ impl Transactions {
             strategy, symbol
         );
         Ok(())
+    }
+
+    pub fn get_transaction(&self, symbol: &str) -> Option<&Transaction> {
+        self.transactions.get(symbol)
     }
 
     pub async fn update_transaction(&mut self, order_id: Uuid) -> Result<()> {
@@ -585,7 +590,7 @@ impl Transactions {
             if let Some(snapshot) = snapshots.get(symbol) {
                 if self
                     .locker
-                    .should_close(&transaction.locker, &snapshot.last_price)
+                    .should_close(&transaction.locker, &snapshot.mid_price)
                     .await
                 {
                     to_close.push(transaction.clone());

@@ -180,8 +180,8 @@ impl fmt::Display for MktOrder {
             f,
             "Order symbol[{}], entry_price[{}], size[{}] action[{}]",
             self.symbol,
-            self.entry_price.round_with(3),
-            self.quantity.round_with(3),
+            self.entry_price.round_with(3).to_f64().unwrap(),
+            self.quantity.round_with(3).to_i64().unwrap(),
             self.action
         )
     }

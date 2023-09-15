@@ -18,14 +18,14 @@ use super::web_clients::Connectors;
 
 #[derive(Default, Debug, Clone)]
 pub struct Snapshot {
-    pub last_price: Num,
+    pub mid_price: Num,
     pub last_seen: DateTime<Utc>,
 }
 
 impl Snapshot {
     pub fn new(last_price: Num) -> Self {
         Snapshot {
-            last_price,
+            mid_price: last_price,
             last_seen: Utc::now(),
         }
     }
@@ -118,13 +118,20 @@ impl MktData {
         to_check
     }
 
-    pub fn capture_data(&mut self, mktdata_update: &stream::Trade) {
+    pub fn capture_data(&mut self, mktdata_update: &stream::Quote) {
         let symbol = &mktdata_update.symbol;
-        let last_price = mktdata_update.trade_price.clone();
+        let bid = &mktdata_update.ask_price;
+        let ask = &mktdata_update.bid_price;
+        let mid = (ask - bid) / 2 + bid;
+
+        info!(
+            "Capture market data for symbol: {}, bid[{}], ask[{}], mid[{}]",
+            symbol, bid, ask, mid
+        );
         match &mut self.snapshots.get_mut(symbol).unwrap() {
-            Some(snapshot) => snapshot.last_price = last_price,
+            Some(snapshot) => snapshot.mid_price = mid,
             None => {
-                let snapshot = Snapshot::new(last_price);
+                let snapshot = Snapshot::new(mid);
                 self.snapshots.insert(symbol.clone(), Some(snapshot));
             }
         }

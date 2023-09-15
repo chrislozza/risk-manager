@@ -85,6 +85,13 @@ impl Engine {
     }
 
     pub async fn create_position(&mut self, mkt_signal: &MktSignal) -> Result<()> {
+        if let Some(transaction) = self.transactions.get_transaction(&mkt_signal.symbol) {
+            info!(
+                "Already has an open transaction for strategy: {} symbol: {}",
+                transaction.strategy, transaction.strategy
+            );
+            return Ok(());
+        }
         if !self
             .assets
             .check_if_assest_is_tradable(&mkt_signal.symbol, mkt_signal.direction)
@@ -215,7 +222,7 @@ impl Engine {
         }
     }
 
-    pub async fn mktdata_update(&mut self, mktdata_update: &stream::Trade) {
+    pub async fn mktdata_update(&mut self, mktdata_update: &stream::Quote) {
         self.mktdata.capture_data(mktdata_update)
     }
 
@@ -382,7 +389,7 @@ impl Engine {
 
     pub async fn run(engine: Arc<Mutex<Engine>>, shutdown_signal: CancellationToken) -> Result<()> {
         let mut event_subscriber = engine.lock().await.get_event_subscriber()?;
-        let mut mktdata_publish_interval = interval(Duration::from_secs(5));
+        let mut mktdata_publish_interval = interval(Duration::from_millis(100));
         tokio::spawn(async move {
             let _ = engine.lock().await.subscribe_to_events().await;
             loop {
@@ -393,8 +400,8 @@ impl Engine {
                                 debug!("Found a trade event: {event:?}");
                                 let _ = engine.lock().await.order_update(&event).await;
                             },
-                            anyhow::Result::Ok(Event::Trade(event)) => {
-                                info!("Found a mkdata event: {event:?}");
+                            anyhow::Result::Ok(Event::Quote(event)) => {
+                                debug!("Found a mkdata event: {event:?}");
                                 engine.lock().await.mktdata_update(&event).await;
                             }
                             anyhow::Result::Err(err) => {

@@ -1,4 +1,5 @@
 use anyhow::Ok;
+use num::ToPrimitive;
 use tracing::error;
 use tracing::info;
 use tracing::warn;
@@ -187,19 +188,24 @@ impl Locker {
         }
     }
 
-    pub fn revive(&mut self, locker_id: Uuid) {
+    pub async fn revive(&mut self, locker_id: Uuid) {
         if let Some(stop) = self.stops.get_mut(&locker_id) {
             stop.status = LockerStatus::Active;
+            stop.persist_to_db(self.db.clone()).await.unwrap();
         }
     }
 
     pub fn print_stop(&mut self, locker_id: &Uuid) -> String {
-        format!("{}", self.stops[locker_id])
+        match self.stops.get_mut(locker_id) {
+            Some(stop) => format!("{}", stop),
+            None => panic!("Failed to find stop with locker_id {}", locker_id),
+        }
     }
 
-    pub fn update_status(&mut self, locker_id: &Uuid, status: LockerStatus) {
-        if let Some(locker) = self.stops.get_mut(locker_id) {
-            locker.status = status
+    pub async fn update_status(&mut self, locker_id: &Uuid, status: LockerStatus) {
+        if let Some(stop) = self.stops.get_mut(locker_id) {
+            stop.status = status;
+            stop.persist_to_db(self.db.clone()).await.unwrap();
         }
     }
 
@@ -245,8 +251,8 @@ impl fmt::Display for TrailingStop {
             f,
             "symbol[{}], price[{}], stop[{}], zone[{}] status[{}] type[{}]",
             self.symbol,
-            self.current_price.round_with(2),
-            self.stop_price.round_with(2),
+            self.current_price.round_with(3).to_f64().unwrap(),
+            self.stop_price.round_with(3).to_f64().unwrap(),
             self.zone,
             self.status,
             self.transact_type
@@ -262,22 +268,25 @@ impl FromRow<'_, PgRow> for TrailingStop {
                 Err(err) => Err(err),
             }
         }
+        let strategy = row.try_get("strategy")?;
+        let symbol = row.try_get("symbol")?;
         let multiplier = row.try_get("multiplier")?;
         let entry_price = sqlx_to_num(row, "entry_price")?;
         let watermark = sqlx_to_num(row, "watermark")?;
         let stop_price = sqlx_to_num(row, "stop_price")?;
-        let pivot_points = Self::calculate_pivot_points(&entry_price, multiplier);
+        let zone: i8 = row.try_get("zone")?;
+        let pivot_points = Self::calculate_pivot_points(strategy, symbol, &entry_price, multiplier);
 
         sqlx::Result::Ok(Self {
             local_id: row.try_get("local_id")?,
-            strategy: row.try_get("strategy")?,
-            symbol: row.try_get("symbol")?,
+            strategy: strategy.to_string(),
+            symbol: symbol.to_string(),
             entry_price: entry_price.clone(),
             current_price: entry_price.clone(),
             pivot_points,
             watermark,
             stop_price,
-            zone: 0,
+            zone,
             multiplier,
             stop_type: StopType::from_str(row.try_get("stop_type")?).unwrap(),
             status: LockerStatus::from_str(row.try_get("status")?).unwrap(),
@@ -295,7 +304,7 @@ impl TrailingStop {
         transact_type: TransactionType,
         db: &Arc<DBClient>,
     ) -> Self {
-        let pivot_points = Self::calculate_pivot_points(&entry_price, multiplier);
+        let pivot_points = Self::calculate_pivot_points(strategy, symbol, &entry_price, multiplier);
         let stop_price = entry_price.clone() * to_num!(1.0 - pivot_points[0].1);
         let watermark = entry_price.clone();
         let current_price = entry_price.clone();
@@ -318,10 +327,20 @@ impl TrailingStop {
     }
 
     fn refresh_entry_price(&mut self, entry_price: Num) {
-        self.pivot_points = Self::calculate_pivot_points(&entry_price, self.multiplier);
+        self.pivot_points = Self::calculate_pivot_points(
+            &self.strategy,
+            &self.symbol,
+            &entry_price,
+            self.multiplier,
+        );
     }
 
-    fn calculate_pivot_points(entry_price: &Num, multiplier: f64) -> [(i8, f64, f64); 4] {
+    fn calculate_pivot_points(
+        strategy: &str,
+        symbol: &str,
+        entry_price: &Num,
+        multiplier: f64,
+    ) -> [(i8, f64, f64); 4] {
         fn pivot_to_price(
             entry_price: &Num,
             pivot_points: [(i8, f64, f64); 4],
@@ -340,7 +359,9 @@ impl TrailingStop {
             (4, (multiplier * 4.0 / 100.0), 2.0 - (1.0 / multiplier)),
         ];
         info!(
-            "Strategy[] Symbol[], adding new stop with entry_price[{}], zones at price targets 1[{}], 2[{}], 3[{}], 4[{}]",
+            "Strategy[{}] Symbol[{}], adding new stop with entry_price[{}], zones at price targets 1[{}], 2[{}], 3[{}], 4[{}]",
+            strategy,
+            symbol,
             entry_price.clone(),
             pivot_to_price(&entry_price, pivot_points, 0),
             pivot_to_price(&entry_price, pivot_points, 1),
@@ -413,6 +434,7 @@ impl TrailingStop {
             "stop_type",
             "multiplier",
             "watermark",
+            "zone",
             "status",
             "local_id",
         ];
@@ -431,6 +453,7 @@ impl TrailingStop {
         if Uuid::is_nil(&self.local_id) {
             self.local_id = Uuid::new_v4();
         }
+
         if let Err(err) = sqlx::query(&stmt)
             .bind(self.strategy.clone())
             .bind(self.symbol.clone())
@@ -439,6 +462,7 @@ impl TrailingStop {
             .bind(self.stop_type.to_string())
             .bind(self.multiplier)
             .bind(self.watermark.round_with(3).to_f64().unwrap())
+            .bind(self.zone.to_i64())
             .bind(self.status.to_string())
             .bind(self.local_id)
             .execute(&db.pool)

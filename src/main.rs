@@ -1,6 +1,8 @@
 use clap::Parser;
 
 use apca::api::v2::updates::OrderUpdate;
+use apca::data::v2::stream::Bar;
+use apca::data::v2::stream::Quote;
 use apca::data::v2::stream::Trade;
 
 use tokio::sync::broadcast::error::RecvError;
@@ -34,6 +36,8 @@ use std::env;
 #[derive(Debug, Clone)]
 pub enum Event {
     Trade(Trade),
+    Quote(Quote),
+    Bar(Bar),
     OrderUpdate(OrderUpdate),
     MktSignal(MktSignal),
 }
@@ -147,7 +151,7 @@ async fn main() {
                 info!("Graceful shutdown initiated");
                 shutdown_signal.cancel();
             }
-            _ = sleep(Duration::from_secs(180)) => {
+            _ = sleep(Duration::from_secs(120)) => {
                 info!("Printing status updates");
                 platform.print_status().await;
             }
