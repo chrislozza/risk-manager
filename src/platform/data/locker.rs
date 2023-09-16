@@ -1,5 +1,4 @@
 use anyhow::Ok;
-use num::ToPrimitive;
 use tracing::error;
 use tracing::info;
 use tracing::warn;
@@ -214,7 +213,7 @@ impl Locker {
             info!("Symbol: {locker_id:?} not being tracked in locker");
             return false;
         }
-        if let Some(stop) = &mut self.stops.get_mut(locker_id) {
+        if let Some(stop) = self.stops.get_mut(locker_id) {
             if stop.status.ne(&LockerStatus::Active) {
                 return false;
             }
@@ -462,13 +461,13 @@ impl TrailingStop {
             .bind(self.stop_type.to_string())
             .bind(self.multiplier)
             .bind(self.watermark.round_with(3).to_f64().unwrap())
-            .bind(self.zone.to_i64())
+            .bind(self.zone)
             .bind(self.status.to_string())
             .bind(self.local_id)
             .execute(&db.pool)
             .await
         {
-            bail!("Failed to publish to db, error={}", err)
+            bail!("Locker failed to publish to db, error={}", err)
         }
         Ok(())
     }

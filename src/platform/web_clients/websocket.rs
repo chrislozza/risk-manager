@@ -67,7 +67,7 @@ impl WebSocket {
 
     pub async fn subscribe_to_mktdata(&self, symbols: stream::SymbolList) -> Result<()> {
         let mut data = stream::MarketData::default();
-        data.set_trades(symbols);
+        data.set_quotes(symbols);
 
         let _ = self
             .subscript_publisher

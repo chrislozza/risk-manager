@@ -25,6 +25,35 @@ use crate::platform::web_clients::Connectors;
 use crate::to_num;
 
 #[derive(Debug, Clone, Copy, Default)]
+pub enum OrderStatus {
+    #[default]
+    Waiting,
+    New,
+    Filled,
+    Cancelled,
+}
+
+impl fmt::Display for OrderStatus {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl FromStr for OrderStatus {
+    type Err = String;
+
+    fn from_str(val: &str) -> std::result::Result<Self, Self::Err> {
+        match val {
+            "Waiting" => std::result::Result::Ok(OrderStatus::Waiting),
+            "New" => std::result::Result::Ok(OrderStatus::New),
+            "Filled" => std::result::Result::Ok(OrderStatus::Filled),
+            "Cancelled" => std::result::Result::Ok(OrderStatus::Cancelled),
+            _ => Err(format!("Failed to parse order status, unknown: {}", val)),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
 pub enum OrderAction {
     Create,
     #[default]
@@ -60,6 +89,7 @@ pub struct MktOrder {
     pub fill_price: Num,
     pub fill_time: DateTime<Utc>,
     pub quantity: Num,
+    pub status: OrderStatus,
 }
 
 impl FromRow<'_, PgRow> for MktOrder {
@@ -79,6 +109,7 @@ impl FromRow<'_, PgRow> for MktOrder {
             fill_price: to_num!(fill_price),
             fill_time,
             quantity: Num::from(quantity),
+            status: OrderStatus::from_str(row.try_get("status")?).unwrap(),
         })
     }
 }
@@ -116,6 +147,7 @@ impl MktOrder {
             "fill_price",
             "fill_time",
             "quantity",
+            "status",
             "local_id",
         ];
 
@@ -143,6 +175,7 @@ impl MktOrder {
             .bind(self.fill_price.round_with(3).to_f64())
             .bind(self.fill_time)
             .bind(self.quantity.to_i64())
+            .bind(self.status.to_string())
             .bind(self.local_id)
             .execute(&db.pool)
             .await
@@ -168,6 +201,15 @@ impl MktOrder {
         if let order::Amount::Quantity { quantity } = order.amount {
             self.quantity = quantity;
         }
+
+        self.status = match order.status {
+            order::Status::Accepted => OrderStatus::Waiting,
+            order::Status::New => OrderStatus::New,
+            order::Status::Filled => OrderStatus::Filled,
+            order::Status::Canceled => OrderStatus::Cancelled,
+            _ => self.status,
+        };
+
         self.persist_db(db, None).await?;
         info!("Updating mktorder {}", self);
         Ok(self)
