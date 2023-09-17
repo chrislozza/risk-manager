@@ -5,15 +5,23 @@ use num_decimal::Num;
 use sqlx::postgres::PgRow;
 use sqlx::FromRow;
 use sqlx::Row;
+use std::cmp::max;
+use std::cmp::min;
 use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 use tracing::error;
 use tracing::info;
 use uuid::Uuid;
 
 use super::DBClient;
 use super::LockerStatus;
+use super::StopType;
+use super::TransactionType;
+use crate::events::Direction;
+use crate::platform::mktdata::MktData;
+use crate::platform::technical_signals::TechnnicalSignals;
 use crate::to_num;
 
 #[derive(Debug, Clone, Default)]
@@ -23,12 +31,13 @@ struct AtrStop {
     symbol: String,
     entry_price: Num,
     current_price: Num,
-    pivot_points: [(i8, f64, f64); 2],
-    stop_price: Num,
+    stop_price: Option<Num>,
     zone: i8,
-    stop_type: StopType,
-    multiplier: f64,
+    multiplier: Num,
     watermark: Num,
+    daily_atr: Option<Num>,
+    stop_type: StopType,
+    direction: Direction,
     status: LockerStatus,
     transact_type: TransactionType,
 }
@@ -40,7 +49,7 @@ impl fmt::Display for AtrStop {
             "symbol[{}], price[{}], stop[{}], zone[{}] status[{}] type[{}]",
             self.symbol,
             self.current_price.round_with(2),
-            self.stop_price.round_with(2),
+            self.stop_price.as_ref().unwrap().round_with(2),
             self.zone,
             self.status,
             self.transact_type
@@ -57,13 +66,12 @@ impl FromRow<'_, PgRow> for AtrStop {
             }
         }
 
-        let strategy = row.try_get("strategy")?;
-        let symbol = row.try_get("symbol")?;
-        let multiplier = row.try_get("multiplier")?;
+        let strategy: &str = row.try_get("strategy")?;
+        let symbol: &str = row.try_get("symbol")?;
+        let multiplier = sqlx_to_num(row, "multiplier")?;
         let entry_price = sqlx_to_num(row, "entry_price")?;
         let watermark = sqlx_to_num(row, "watermark")?;
         let stop_price = sqlx_to_num(row, "stop_price")?;
-        let pivot_points = Self::calculate_atr_stop(strategy, symbol, &entry_price, multiplier);
 
         sqlx::Result::Ok(Self {
             local_id: row.try_get("local_id")?,
@@ -71,12 +79,13 @@ impl FromRow<'_, PgRow> for AtrStop {
             symbol: symbol.to_string(),
             entry_price: entry_price.clone(),
             current_price: entry_price.clone(),
-            pivot_points,
             watermark,
-            stop_price,
+            stop_price: Some(stop_price),
             zone: 0,
             multiplier,
+            daily_atr: None,
             stop_type: StopType::from_str(row.try_get("stop_type")?).unwrap(),
+            direction: Direction::from_str(row.try_get("direction")?).unwrap(),
             status: LockerStatus::from_str(row.try_get("status")?).unwrap(),
             transact_type: TransactionType::Position,
         })
@@ -88,12 +97,10 @@ impl AtrStop {
         strategy: &str,
         symbol: &str,
         entry_price: Num,
-        multiplier: f64,
+        multiplier: Num,
         transact_type: TransactionType,
         db: &Arc<DBClient>,
-    ) -> Self {
-        let pivot_points = Self::calculate_atr_stop(strategy, symbol, &entry_price, multiplier);
-        let stop_price = entry_price.clone() * to_num!(1.0 - pivot_points[0].1);
+    ) -> Result<Self> {
         let watermark = entry_price.clone();
         let current_price = entry_price.clone();
         let mut stop = AtrStop {
@@ -101,8 +108,8 @@ impl AtrStop {
             symbol: symbol.to_string(),
             entry_price,
             current_price,
-            pivot_points,
-            stop_price,
+            stop_price: None,
+            daily_atr: None,
             multiplier,
             watermark,
             transact_type,
@@ -111,98 +118,79 @@ impl AtrStop {
         if let Err(err) = stop.persist_to_db(db.clone()).await {
             error!("Failed to persist stop to db, error={}", err);
         }
-        stop
+        Ok(stop)
     }
 
-    fn refresh_entry_price(&mut self, entry_price: Num) {
-        self.pivot_points =
-            Self::calculate_atr_stop(&self.strategy, &self.symbol, &entry_price, self.multiplier);
-    }
+    async fn calculate_atr_stop(
+        &mut self,
+        watermark: Num,
+        current_price: Num,
+        stop_price: Num,
+        multiplier: Num,
+        direction: Direction,
+        mktdata: &Arc<Mutex<MktData>>,
+    ) -> Result<Num> {
+        let daily_atr = TechnnicalSignals::get_atr(&self.symbol, mktdata).await?;
+        let stop = match direction {
+            Direction::Long => max(stop_price, watermark - (daily_atr * multiplier)),
+            Direction::Short => min(stop_price, watermark + (daily_atr * multiplier)),
+            _ => bail!("Direction not found calculating atr stop"),
+        };
 
-    fn calculate_atr_stop(
-        strategy: &str,
-        symbol: &str,
-        entry_price: &Num,
-        multiplier: f64,
-    ) -> [(i8, f64, f64); 2] {
-        fn pivot_to_price(
-            entry_price: &Num,
-            pivot_points: [(i8, f64, f64); 2],
-            index: usize,
-        ) -> f64 {
-            (entry_price.clone() * to_num!(1.0 + pivot_points[index].1))
-                .round_with(3)
-                .to_f64()
-                .unwrap()
-        }
-        let entry_price = entry_price.round_with(3);
-        let pivot_points = [
-            (1, (multiplier / 100.0), 1.0),
-            (2, (multiplier * 2.0 / 100.0), 0.0),
-        ];
         info!(
-            "Strategy[{}] Symbol[{}], adding new stop with entry_price[{}], zones at price targets 1[{}], 2[{}]",
-            strategy,
-            symbol,
-            entry_price.clone(),
-            pivot_to_price(&entry_price, pivot_points, 0),
-            pivot_to_price(&entry_price, pivot_points, 1),
+            "Strategy[{}] Symbol[{}], adding new stop with last price[{}], atr stop set at[{}]]",
+            &self.strategy,
+            &self.symbol,
+            current_price.clone(),
+            stop
         );
-        pivot_points
+        Ok(stop)
     }
 
-    async fn price_update(&mut self, current_price: Num, db: &Arc<DBClient>) -> Num {
-        self.current_price = current_price.clone();
-        let price = current_price.to_f64().unwrap();
-        let price_change = price - self.watermark.to_f64().unwrap();
-        if price_change <= 0.0 || self.status == LockerStatus::Disabled {
-            return self.stop_price.clone();
-        }
-        let entry_price = self.entry_price.to_f64().unwrap();
-        let mut stop_loss_level = self.stop_price.to_f64().unwrap();
-        for pivot in self.pivot_points.iter() {
-            let (zone, percentage_change, new_trail_factor) = pivot;
-            match zone {
-                2 => {
-                    if price > (entry_price * (1.0 + percentage_change)) {
-                        // final trail at 1%
-                        stop_loss_level = price - (entry_price * 0.01)
-                    } else {
-                        // close distance X% -> 1%
-                        stop_loss_level += price_change * new_trail_factor
-                    }
-                }
-                _ => {
-                    if price > entry_price * (1.0 + percentage_change) {
-                        continue;
-                    }
-                    // set trail based on zone
-                    stop_loss_level += new_trail_factor * price_change;
-                }
+    async fn price_update(
+        &mut self,
+        current_price: Num,
+        db: &Arc<DBClient>,
+        mktdata: &Arc<Mutex<MktData>>,
+    ) -> Result<Num> {
+        let stop_price = match &self.daily_atr {
+            Some(val) => val.clone(),
+            None => {
+                self.calculate_atr_stop(
+                    self.watermark.clone(),
+                    current_price.clone(),
+                    self.stop_price.clone().unwrap(),
+                    self.multiplier.clone(),
+                    self.direction,
+                    mktdata,
+                )
+                .await?
             }
-            if *zone > self.zone {
-                info!(
-                    "Price update for symbol: {}, new stop level: {} in zone: {}",
-                    self.symbol,
-                    self.stop_price.clone().round_with(2),
-                    zone
-                );
-                self.zone = *zone;
+        };
+        self.stop_price = Some(stop_price);
+        if let Some(stop_price) = &self.stop_price {
+            self.current_price = current_price.clone();
+            let price = current_price;
+            let price_change = price - self.watermark.clone();
+            if price_change <= to_num!(0.0) || self.status == LockerStatus::Disabled {
+                return Ok(stop_price.clone());
             }
-            break;
-        }
-        let stop_loss_level = to_num!(stop_loss_level);
-        if self.stop_price != stop_loss_level {
-            self.stop_price = stop_loss_level.clone();
-        }
-        if current_price > self.watermark {
-            self.watermark = current_price;
-        }
 
-        if self.transact_type == TransactionType::Position {
-            let _ = self.persist_to_db(db.clone()).await;
+            self.watermark += price_change.clone();
+
+            let stop_loss_level = match self.direction {
+                Direction::Long => stop_price + price_change,
+                Direction::Short => stop_price - price_change,
+                _ => panic!("Can't find a set direction"),
+            };
+            if self.transact_type == TransactionType::Position {
+                let _ = self.persist_to_db(db.clone()).await;
+            }
+
+            Ok(stop_loss_level)
+        } else {
+            panic!("No stop price set for symbol: {}", self.symbol)
         }
-        stop_loss_level
     }
 
     async fn persist_to_db(&mut self, db: Arc<DBClient>) -> Result<()> {
@@ -238,9 +226,16 @@ impl AtrStop {
             .bind(self.strategy.clone())
             .bind(self.symbol.clone())
             .bind(self.entry_price.round_with(3).to_f64().unwrap())
-            .bind(self.stop_price.round_with(3).to_f64().unwrap())
+            .bind(
+                self.stop_price
+                    .as_ref()
+                    .unwrap()
+                    .round_with(3)
+                    .to_f64()
+                    .unwrap(),
+            )
             .bind(self.stop_type.to_string())
-            .bind(self.multiplier)
+            .bind(self.multiplier.round_with(3).to_f64().unwrap())
             .bind(self.watermark.round_with(3).to_f64().unwrap())
             .bind(self.zone)
             .bind(self.status.to_string())

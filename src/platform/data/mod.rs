@@ -1,30 +1,22 @@
+use anyhow::bail;
 use anyhow::Ok;
-
-use tracing::debug;
-use tracing::error;
-use tracing::info;
-use tracing::warn;
-
-use crate::to_num;
+use anyhow::Result;
+use chrono::DateTime;
+use chrono::Utc;
+use num_decimal::Num;
+use sqlx::postgres::PgRow;
+use sqlx::FromRow;
+use sqlx::Row;
 use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
+use tokio::sync::Mutex;
+use tracing::debug;
+use tracing::error;
+use tracing::info;
+use tracing::warn;
 use uuid::Uuid;
-
-use num_decimal::Num;
-
-use crate::events::Direction;
-use anyhow::bail;
-use anyhow::Result;
-
-use sqlx::postgres::PgRow;
-use sqlx::FromRow;
-use sqlx::Row;
-
-use chrono::DateTime;
-use chrono::Utc;
-
 pub mod account;
 pub mod assets;
 mod db_client;
@@ -40,8 +32,11 @@ use super::data::mktorder::MktOrders;
 use super::data::mktorder::OrderAction;
 use super::data::mktposition::MktPosition;
 use super::data::mktposition::MktPositions;
+use super::mktdata::MktData;
 use super::mktdata::Snapshot;
 use super::web_clients::Connectors;
+use crate::events::Direction;
+use crate::to_num;
 
 use crate::Settings;
 
@@ -279,9 +274,13 @@ pub struct Transactions {
 }
 
 impl Transactions {
-    pub async fn new(settings: &Settings, connectors: &Arc<Connectors>) -> Result<Self> {
+    pub async fn new(
+        settings: &Settings,
+        connectors: &Arc<Connectors>,
+        mktdata: &Arc<Mutex<MktData>>,
+    ) -> Result<Self> {
         let db = DBClient::new(settings).await?;
-        let locker = Locker::new(settings, db.clone());
+        let locker = Locker::new(settings, db.clone(), mktdata);
 
         let transactions = HashMap::new();
         let mktorders = MktOrders::new(connectors, &db);

@@ -1,20 +1,16 @@
+use super::web_clients::Connectors;
+use anyhow::Result;
 use apca::data::v2::bars;
 use apca::data::v2::stream;
-
 use chrono::DateTime;
 use chrono::Duration;
 use chrono::Utc;
+use num_decimal::Num;
 use std::collections::HashMap;
 use std::sync::Arc;
-
-use tracing::info;
-
-use anyhow::Result;
-
-use num_decimal::Num;
 use std::vec::Vec;
-
-use super::web_clients::Connectors;
+use tokio::sync::Mutex;
+use tracing::info;
 
 #[derive(Default, Debug, Clone)]
 pub struct Snapshot {
@@ -40,17 +36,18 @@ impl Snapshot {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct MktData {
     connectors: Arc<Connectors>,
     snapshots: HashMap<String, Option<Snapshot>>,
 }
 
 impl MktData {
-    pub fn new(connectors: &Arc<Connectors>) -> Self {
-        MktData {
+    pub fn new(connectors: &Arc<Connectors>) -> Arc<Mutex<Self>> {
+        Arc::new(Mutex::new(MktData {
             connectors: Arc::clone(connectors),
             snapshots: HashMap::default(),
-        }
+        }))
     }
 
     pub async fn get_historical_bars(

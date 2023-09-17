@@ -203,12 +203,9 @@ impl TrailingStop {
             break;
         }
         let stop_loss_level = to_num!(stop_loss_level);
-        if self.stop_price != stop_loss_level {
-            self.stop_price = stop_loss_level.clone();
-        }
-        if current_price > self.watermark {
-            self.watermark = current_price;
-        }
+
+        self.stop_price = stop_loss_level.clone();
+        self.watermark = current_price;
 
         if self.transact_type == TransactionType::Position {
             let _ = self.persist_to_db(db.clone()).await;

@@ -5,15 +5,17 @@ use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 use tracing::info;
 use tracing::warn;
 use uuid::Uuid;
 
-//mod atr_stop;
+mod atr_stop;
 mod trailing_stop;
 
 use super::locker::trailing_stop::TrailingStop;
 use super::DBClient;
+use super::MktData;
 use super::Settings;
 
 #[derive(Debug, PartialEq, Clone, Copy, Default)]
@@ -88,14 +90,16 @@ pub struct Locker {
     stops: HashMap<Uuid, TrailingStop>,
     settings: Settings,
     db: Arc<DBClient>,
+    mktdata: Arc<Mutex<MktData>>,
 }
 
 impl Locker {
-    pub fn new(settings: &Settings, db: Arc<DBClient>) -> Self {
+    pub fn new(settings: &Settings, db: Arc<DBClient>, mktdata: &Arc<Mutex<MktData>>) -> Self {
         Locker {
             stops: HashMap::new(),
             settings: settings.clone(),
             db,
+            mktdata: Arc::clone(mktdata),
         }
     }
 

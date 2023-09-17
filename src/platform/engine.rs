@@ -45,7 +45,7 @@ pub struct Engine {
     settings: Settings,
     account: AccountDetails,
     assets: Assets,
-    mktdata: MktData,
+    mktdata: Arc<Mutex<MktData>>,
     order_handler: OrderHandler,
     transactions: Transactions,
     connectors: Arc<Connectors>,
@@ -64,7 +64,7 @@ impl Engine {
         let assets = Assets::new(&connectors).await?;
         let order_handler = OrderHandler::new(&connectors);
         let mktdata = MktData::new(&connectors);
-        let transactions = Transactions::new(&settings, &connectors).await?;
+        let transactions = Transactions::new(&settings, &connectors, &mktdata).await?;
         Ok(Arc::new(Mutex::new(Engine {
             settings,
             account,
@@ -166,7 +166,7 @@ impl Engine {
         total_equity: &Num,
         sizing: PositionSizing,
         number_of_strategies: usize,
-        mktdata: &MktData,
+        mktdata: &Arc<Mutex<MktData>>,
     ) -> Result<Num> {
         let risk_tolerance = to_num!(sizing.risk_tolerance);
         let total_equity_per_strategy = total_equity / number_of_strategies;
@@ -206,11 +206,11 @@ impl Engine {
     }
 
     pub async fn mktdata_update(&mut self, mktdata_update: &stream::Quote) {
-        self.mktdata.capture_data(mktdata_update)
+        self.mktdata.lock().await.capture_data(mktdata_update)
     }
 
     pub async fn mktdata_publish(&mut self) {
-        let snapshots = self.mktdata.get_snapshots();
+        let snapshots = self.mktdata.lock().await.get_snapshots();
         let to_close = self
             .transactions
             .find_transactions_to_close(&snapshots)
@@ -293,7 +293,7 @@ impl Engine {
                         error!("Failed to cancel transaction, error={}", err);
                         bail!("{}", err)
                     }
-                    _ => self.mktdata.unsubscribe(&symbol).await?,
+                    _ => self.mktdata.lock().await.unsubscribe(&symbol).await?,
                 },
                 OrderAction::Liquidate => self.transactions.reactivate_stop(&symbol).await,
             }
@@ -310,7 +310,7 @@ impl Engine {
 
             if let OrderAction::Create = order.action {
                 self.transactions.activate_stop(&symbol).await;
-                self.mktdata.subscribe(&symbol).await?;
+                self.mktdata.lock().await.subscribe(&symbol).await?;
             } else {
                 warn!("Didn't add order to locker action: {}", order.action);
             };
@@ -336,7 +336,7 @@ impl Engine {
                     self.transactions.update_transaction(order_id).await?;
                 }
                 OrderAction::Liquidate => {
-                    self.mktdata.unsubscribe(&symbol).await?;
+                    self.mktdata.lock().await.unsubscribe(&symbol).await?;
                     self.transactions.stop_complete(&symbol).await;
 
                     self.transactions.close_transaction(order_id).await?
@@ -352,7 +352,7 @@ impl Engine {
         self.order_handler.subscribe_to_events().await?;
 
         let symbols = self.transactions.get_subscribed_symbols().await?;
-        self.mktdata.startup(symbols).await?;
+        self.mktdata.lock().await.startup(symbols).await?;
         Ok(())
     }
 

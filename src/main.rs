@@ -12,7 +12,6 @@ use tracing::info;
 use tracing::warn;
 
 mod events;
-mod gcp_client;
 mod logging;
 mod platform;
 mod settings;
