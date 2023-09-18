@@ -42,10 +42,9 @@ impl<'de> serde::Deserialize<'de> for PortAction {
 
 #[derive(Debug, Clone, Copy, Default)]
 pub enum Direction {
+    #[default]
     Long,
     Short,
-    #[default]
-    Unset,
 }
 
 impl fmt::Display for Direction {

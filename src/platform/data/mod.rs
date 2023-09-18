@@ -387,7 +387,13 @@ impl Transactions {
         self.mktpositions.update_position(symbol).await
     }
 
-    pub async fn add_stop(&mut self, symbol: &str, strategy: &str, entry_price: Num) -> Result<()> {
+    pub async fn add_stop(
+        &mut self,
+        symbol: &str,
+        strategy: &str,
+        entry_price: Num,
+        direction: Direction,
+    ) -> Result<()> {
         if let Some(transaction) = self.transactions.get_mut(symbol) {
             info!(
                 "Strategy[{}] locker tracking {} at entry_price: {}",
@@ -395,7 +401,13 @@ impl Transactions {
             );
             let locker_id = self
                 .locker
-                .create_new_stop(symbol, strategy, entry_price, TransactionType::Order)
+                .create_new_stop(
+                    symbol,
+                    strategy,
+                    entry_price,
+                    TransactionType::Order,
+                    direction,
+                )
                 .await;
             transaction.locker = locker_id;
             transaction.persist_db(self.db.clone()).await?
@@ -445,7 +457,7 @@ impl Transactions {
     }
 
     pub async fn stop_complete(&mut self, symbol: &str) {
-        if let Some(transaction) = self.transactions.get("symbol") {
+        if let Some(transaction) = self.transactions.get(symbol) {
             self.locker.complete(transaction.locker).await;
         } else {
             warn!(
@@ -519,7 +531,7 @@ impl Transactions {
     pub async fn cancel_transaction(&mut self, order_id: Uuid) -> Result<()> {
         let order = self.update_order(order_id).await?;
         let symbol = order.symbol.clone();
-        info!("Transaction complete for symbol: {}", symbol);
+        info!("Transaction cancelled for symbol: {}", symbol);
         if let Some(transaction) = self.transactions.get_mut(&symbol) {
             transaction
                 .transaction_complete(&order, None, TransactionStatus::Cancelled, &self.db)

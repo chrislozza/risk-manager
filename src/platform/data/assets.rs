@@ -50,9 +50,8 @@ impl Assets {
         if let Some(asset) = self.assets.get(symbol) {
             info!("Asset: {} found in cache: {:?}", symbol, asset);
             let is_tradable = match direction {
-                Direction::Short => asset.shortable && asset.marginable,
+                Direction::Short => asset.shortable && asset.marginable && asset.easy_to_borrow,
                 Direction::Long => true,
-                _ => panic!("Direction unset, closing app"),
             };
             return is_tradable;
         }

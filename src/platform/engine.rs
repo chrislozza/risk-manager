@@ -145,7 +145,7 @@ impl Engine {
                     strategy, symbol
                 );
                 self.transactions
-                    .add_stop(symbol, strategy, entry_price)
+                    .add_stop(symbol, strategy, entry_price, direction)
                     .await
             }
             Err(err) => bail!(
@@ -186,7 +186,7 @@ impl Engine {
 
     async fn handle_closing_order(&mut self, symbol: &str, order_id: Uuid) {
         self.handle_cancel(symbol, order_id).await;
-        self.transactions.reactivate_stop(symbol).await
+        self.transactions.stop_complete(symbol).await
     }
 
     async fn handle_closing_position(
@@ -348,9 +348,7 @@ impl Engine {
         Ok(())
     }
 
-    pub async fn subscribe_to_events(&mut self) -> Result<()> {
-        self.order_handler.subscribe_to_events().await?;
-
+    pub async fn subscribe_to_mktdata(&mut self) -> Result<()> {
         let symbols = self.transactions.get_subscribed_symbols().await?;
         self.mktdata.lock().await.startup(symbols).await?;
         Ok(())
@@ -364,7 +362,7 @@ impl Engine {
         let mut event_subscriber = engine.lock().await.get_event_subscriber()?;
         let mut mktdata_publish_interval = interval(Duration::from_millis(100));
         tokio::spawn(async move {
-            let _ = engine.lock().await.subscribe_to_events().await;
+            let _ = engine.lock().await.subscribe_to_mktdata().await;
             loop {
                 tokio::select!(
                     event = event_subscriber.recv() => {

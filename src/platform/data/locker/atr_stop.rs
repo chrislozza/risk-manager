@@ -32,7 +32,7 @@ struct AtrStop {
     entry_price: Num,
     current_price: Num,
     stop_price: Option<Num>,
-    zone: i8,
+    zone: i16,
     multiplier: Num,
     watermark: Num,
     daily_atr: Option<Num>,
@@ -99,6 +99,7 @@ impl AtrStop {
         entry_price: Num,
         multiplier: Num,
         transact_type: TransactionType,
+        direction: Direction,
         db: &Arc<DBClient>,
     ) -> Result<Self> {
         let watermark = entry_price.clone();
@@ -112,6 +113,7 @@ impl AtrStop {
             daily_atr: None,
             multiplier,
             watermark,
+            direction,
             transact_type,
             ..Default::default()
         };
