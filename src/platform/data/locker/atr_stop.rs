@@ -32,7 +32,7 @@ struct AtrStop {
     entry_price: Num,
     current_price: Num,
     stop_price: Option<Num>,
-    zone: i8,
+    zone: i16,
     multiplier: Num,
     watermark: Num,
     daily_atr: Option<Num>,

@@ -52,7 +52,6 @@ impl Assets {
             let is_tradable = match direction {
                 Direction::Short => asset.shortable && asset.marginable,
                 Direction::Long => true,
-                _ => panic!("Direction unset, closing app"),
             };
             return is_tradable;
         }

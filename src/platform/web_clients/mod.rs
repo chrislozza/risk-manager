@@ -53,7 +53,7 @@ impl Connectors {
         info!("Connector starting with url: {api_base_url}");
         let api_info = ApiInfo::from_parts(api_base_url, key, secret)?;
         let client = Client::new(api_info);
-        let (publisher, _subscriber) = broadcast::channel(32);
+        let (publisher, _subscriber) = broadcast::channel(150);
         let http_client = HttpClient::new(shutdown_signal.clone());
         let websocket = WebSocket::new(publisher.clone(), shutdown_signal.clone());
         Ok(Arc::new(Connectors {

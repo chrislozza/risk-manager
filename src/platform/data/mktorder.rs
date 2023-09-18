@@ -220,7 +220,8 @@ impl fmt::Display for MktOrder {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "Order symbol[{}], entry_price[{}], size[{}] action[{}]",
+            "Order strategy[{}], symbol[{}], entry_price[{}], size[{}] action[{}]",
+            self.strategy,
             self.symbol,
             self.entry_price.round_with(3).to_f64().unwrap(),
             self.quantity.round_with(3).to_i64().unwrap(),

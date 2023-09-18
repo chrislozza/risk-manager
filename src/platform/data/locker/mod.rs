@@ -17,6 +17,7 @@ use super::locker::trailing_stop::TrailingStop;
 use super::DBClient;
 use super::MktData;
 use super::Settings;
+use crate::events::Direction;
 
 #[derive(Debug, PartialEq, Clone, Copy, Default)]
 pub enum LockerStatus {
@@ -147,6 +148,7 @@ impl Locker {
         strategy: &str,
         entry_price: Num,
         transact_type: TransactionType,
+        direction: Direction,
     ) -> Uuid {
         let strategy_cfg = &self.settings.strategies[strategy];
         let stop_cfg = &self.settings.stops[&strategy_cfg.locker];
@@ -156,6 +158,7 @@ impl Locker {
             entry_price.clone(),
             stop_cfg.multiplier,
             transact_type,
+            direction,
             &self.db,
         )
         .await;
@@ -181,7 +184,7 @@ impl Locker {
     }
 
     pub async fn complete(&mut self, locker_id: Uuid) {
-        if let Some(mut stop) = self.stops.remove(&locker_id) {
+        if let Some(mut stop) = self.stops.get_mut(&locker_id) {
             info!("Locker tracking symbol: {} marked as complete", stop.symbol);
             stop.status = LockerStatus::Finished;
             stop.persist_to_db(self.db.clone()).await.unwrap();

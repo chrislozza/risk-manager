@@ -16,6 +16,7 @@ use super::DBClient;
 use super::LockerStatus;
 use super::StopType;
 use super::TransactionType;
+use crate::events::Direction;
 use crate::to_num;
 
 #[derive(Debug, Clone, Default)]
@@ -25,12 +26,13 @@ pub struct TrailingStop {
     pub symbol: String,
     pub entry_price: Num,
     pub current_price: Num,
-    pub pivot_points: [(i8, f64, f64); 4],
+    pub pivot_points: [(i16, f64, f64); 4],
     pub stop_price: Num,
-    pub zone: i8,
-    pub stop_type: StopType,
+    pub zone: i16,
     pub multiplier: f64,
     pub watermark: Num,
+    pub direction: Direction,
+    pub stop_type: StopType,
     pub status: LockerStatus,
     pub transact_type: TransactionType,
 }
@@ -39,8 +41,7 @@ impl fmt::Display for TrailingStop {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "symbol[{}], price[{}], stop[{}], zone[{}] status[{}] type[{}]",
-            self.symbol,
+            "price[{}], stop[{}], zone[{}] status[{}] type[{}]",
             self.current_price.round_with(3).to_f64().unwrap(),
             self.stop_price.round_with(3).to_f64().unwrap(),
             self.zone,
@@ -65,8 +66,10 @@ impl FromRow<'_, PgRow> for TrailingStop {
         let entry_price = sqlx_to_num(row, "entry_price")?;
         let watermark = sqlx_to_num(row, "watermark")?;
         let stop_price = sqlx_to_num(row, "stop_price")?;
-        let zone: i8 = row.try_get("zone")?;
-        let pivot_points = Self::calculate_pivot_points(strategy, symbol, &entry_price, multiplier);
+        let zone = row.try_get("zone")?;
+        let direction = Direction::from_str(row.try_get("direction")?).unwrap();
+        let pivot_points =
+            Self::calculate_pivot_points(strategy, symbol, &entry_price, multiplier, direction);
 
         sqlx::Result::Ok(Self {
             local_id: row.try_get("local_id")?,
@@ -79,7 +82,8 @@ impl FromRow<'_, PgRow> for TrailingStop {
             stop_price,
             zone,
             multiplier,
-            stop_type: StopType::from_str(row.try_get("stop_type")?).unwrap(),
+            direction,
+            stop_type: StopType::from_str(row.try_get("type")?).unwrap(),
             status: LockerStatus::from_str(row.try_get("status")?).unwrap(),
             transact_type: TransactionType::Position,
         })
@@ -93,9 +97,11 @@ impl TrailingStop {
         entry_price: Num,
         multiplier: f64,
         transact_type: TransactionType,
+        direction: Direction,
         db: &Arc<DBClient>,
     ) -> Self {
-        let pivot_points = Self::calculate_pivot_points(strategy, symbol, &entry_price, multiplier);
+        let pivot_points =
+            Self::calculate_pivot_points(strategy, symbol, &entry_price, multiplier, direction);
         let stop_price = entry_price.clone() * to_num!(1.0 - pivot_points[0].1);
         let watermark = entry_price.clone();
         let current_price = entry_price.clone();
@@ -123,6 +129,7 @@ impl TrailingStop {
             &self.symbol,
             &entry_price,
             self.multiplier,
+            self.direction,
         );
     }
 
@@ -131,16 +138,24 @@ impl TrailingStop {
         symbol: &str,
         entry_price: &Num,
         multiplier: f64,
-    ) -> [(i8, f64, f64); 4] {
+        direction: Direction,
+    ) -> [(i16, f64, f64); 4] {
         fn pivot_to_price(
             entry_price: &Num,
-            pivot_points: [(i8, f64, f64); 4],
+            pivot_points: [(i16, f64, f64); 4],
             index: usize,
+            direction: Direction,
         ) -> f64 {
-            (entry_price.clone() * to_num!(1.0 + pivot_points[index].1))
-                .round_with(3)
-                .to_f64()
-                .unwrap()
+            match direction {
+                Direction::Long => (entry_price.clone() * to_num!(1.0 + pivot_points[index].1))
+                    .round_with(3)
+                    .to_f64()
+                    .unwrap(),
+                Direction::Short => (entry_price.clone() * to_num!(1.0 - pivot_points[index].1))
+                    .round_with(3)
+                    .to_f64()
+                    .unwrap(),
+            }
         }
         let entry_price = entry_price.round_with(3);
         let pivot_points = [
@@ -154,10 +169,10 @@ impl TrailingStop {
             strategy,
             symbol,
             entry_price.clone(),
-            pivot_to_price(&entry_price, pivot_points, 0),
-            pivot_to_price(&entry_price, pivot_points, 1),
-            pivot_to_price(&entry_price, pivot_points, 2),
-            pivot_to_price(&entry_price, pivot_points, 3),
+            pivot_to_price(&entry_price, pivot_points, 0, direction),
+            pivot_to_price(&entry_price, pivot_points, 1, direction),
+            pivot_to_price(&entry_price, pivot_points, 2, direction),
+            pivot_to_price(&entry_price, pivot_points, 3, direction),
         );
         pivot_points
     }
@@ -219,9 +234,10 @@ impl TrailingStop {
             "symbol",
             "entry_price",
             "stop_price",
-            "stop_type",
+            "type",
             "zone",
             "multiplier",
+            "direction",
             "watermark",
             "status",
             "local_id",
@@ -249,6 +265,7 @@ impl TrailingStop {
             .bind(self.stop_type.to_string())
             .bind(self.zone)
             .bind(self.multiplier)
+            .bind(self.direction.to_string())
             .bind(self.watermark.round_with(3).to_f64().unwrap())
             .bind(self.status.to_string())
             .bind(self.local_id)

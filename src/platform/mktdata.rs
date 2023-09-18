@@ -10,7 +10,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::vec::Vec;
 use tokio::sync::Mutex;
+use tracing::debug;
 use tracing::info;
+use tracing::warn;
 
 #[derive(Default, Debug, Clone)]
 pub struct Snapshot {
@@ -99,7 +101,6 @@ impl MktData {
             .connectors
             .unsubscribe_from_symbols(vec![symbol.to_string()].into())
             .await?;
-        self.snapshots.remove(symbol);
         std::result::Result::Ok(())
     }
 
@@ -121,16 +122,20 @@ impl MktData {
         let ask = &mktdata_update.bid_price;
         let mid = (ask - bid) / 2 + bid;
 
-        info!(
+        debug!(
             "Capture market data for symbol: {}, bid[{}], ask[{}], mid[{}]",
             symbol, bid, ask, mid
         );
-        match &mut self.snapshots.get_mut(symbol).unwrap() {
-            Some(snapshot) => snapshot.mid_price = mid,
-            None => {
-                let snapshot = Snapshot::new(mid);
-                self.snapshots.insert(symbol.clone(), Some(snapshot));
+        if let Some(wrapped_snapshot) = &mut self.snapshots.get_mut(symbol) {
+            match wrapped_snapshot {
+                Some(snapshot) => snapshot.mid_price = mid,
+                None => {
+                    let snapshot = Snapshot::new(mid);
+                    self.snapshots.insert(symbol.clone(), Some(snapshot));
+                }
             }
+        } else {
+            warn!("Symbol[{}] not found in mktdata update", symbol);
         }
     }
 }
