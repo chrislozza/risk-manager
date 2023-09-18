@@ -1,6 +1,9 @@
 use anyhow::Ok;
 use anyhow::Result;
 use num_decimal::Num;
+use sqlx::postgres::PgRow;
+use sqlx::FromRow;
+use sqlx::Row;
 use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
@@ -13,6 +16,7 @@ use uuid::Uuid;
 mod atr_stop;
 mod trailing_stop;
 
+use super::locker::atr_stop::AtrStop;
 use super::locker::trailing_stop::TrailingStop;
 use super::DBClient;
 use super::MktData;
@@ -79,7 +83,6 @@ pub enum StopType {
     #[default]
     Percent,
     Atr,
-    Combo,
 }
 
 impl FromStr for StopType {
@@ -89,7 +92,6 @@ impl FromStr for StopType {
         match val {
             "Percent" => std::result::Result::Ok(StopType::Percent),
             "ATR" => std::result::Result::Ok(StopType::Atr),
-            "Combo" => std::result::Result::Ok(StopType::Combo),
             _ => Err(format!("Failed to parse stop type, unknown: {}", val)),
         }
     }
@@ -101,9 +103,15 @@ impl fmt::Display for StopType {
     }
 }
 
+#[derive(Debug, Clone)]
+pub enum Stop {
+    Atr(AtrStop),
+    Smart(TrailingStop),
+}
+
 #[derive(Debug)]
 pub struct Locker {
-    stops: HashMap<Uuid, TrailingStop>,
+    stops: HashMap<Uuid, Stop>,
     settings: Settings,
     db: Arc<DBClient>,
     mktdata: Arc<Mutex<MktData>>,
@@ -120,39 +128,70 @@ impl Locker {
     }
 
     pub async fn startup(&mut self) -> Result<()> {
-        async fn fetch_stops(
+        async fn fetch_stops<Type>(
             stmt: String,
-            status: String,
+            statuses: Vec<LockerStatus>,
+            stop_type: StopType,
             db: &Arc<DBClient>,
-        ) -> Vec<TrailingStop> {
-            match sqlx::query_as::<_, TrailingStop>(&stmt)
-                .bind(status)
-                .fetch_all(&db.pool)
-                .await
-            {
-                sqlx::Result::Ok(val) => val,
-                Err(err) => panic!(
-                    "Failed to fetch locker entries from db, closing app, error={}",
-                    err
-                ),
+        ) -> Vec<Type>
+        where
+            Type: for<'r> FromRow<'r, PgRow> + Send + Unpin,
+        {
+            let mut results = Vec::new();
+            for status in statuses {
+                let rs = match sqlx::query_as::<_, Type>(&stmt)
+                    .bind(status.to_string())
+                    .bind(stop_type.to_string())
+                    .fetch_all(&db.pool)
+                    .await
+                {
+                    sqlx::Result::Ok(val) => val,
+                    Err(err) => panic!(
+                        "Failed to fetch locker entries from db, closing app, error={}",
+                        err
+                    ),
+                };
+                results.extend(rs);
             }
+            results
         }
 
-        let columns = vec!["status"];
+        let columns = vec!["status", "type"];
         let stmt = self
             .db
             .query_builder
             .prepare_fetch_statement("locker", &columns);
 
-        let status = LockerStatus::Disabled.to_string();
-        let mut rows = fetch_stops(stmt.clone(), status, &self.db).await;
+        let atr_stops = fetch_stops::<AtrStop>(
+            stmt.clone(),
+            vec![LockerStatus::Disabled, LockerStatus::Active],
+            StopType::Atr,
+            &self.db,
+        )
+        .await;
 
-        let status = LockerStatus::Active.to_string();
-        let active_stops = fetch_stops(stmt, status, &self.db).await;
-        rows.extend(active_stops);
-        for stop in rows {
-            let local_id = stop.local_id;
-            self.stops.insert(local_id, stop);
+        let percent_stops = fetch_stops::<TrailingStop>(
+            stmt.clone(),
+            vec![LockerStatus::Disabled, LockerStatus::Active],
+            StopType::Percent,
+            &self.db,
+        )
+        .await;
+
+        let mut rows: Vec<Stop> = atr_stops.iter().map(|f| Stop::Atr(f.clone())).collect();
+        rows.extend(
+            percent_stops
+                .iter()
+                .map(|f| Stop::Smart(f.clone()))
+                .collect::<Vec<Stop>>(),
+        );
+
+        for stop in &rows {
+            let local_id = match stop {
+                Stop::Atr(stop) => stop.local_id,
+                Stop::Smart(stop) => stop.local_id,
+            };
+            self.stops.insert(local_id, stop.clone());
         }
         Ok(())
     }
@@ -167,17 +206,40 @@ impl Locker {
     ) -> Uuid {
         let strategy_cfg = &self.settings.strategies[strategy];
         let stop_cfg = &self.settings.stops[&strategy_cfg.locker];
-        let stop = TrailingStop::new(
-            strategy,
-            symbol,
-            entry_price.clone(),
-            stop_cfg.multiplier,
-            transact_type,
+        let stop_type = StopType::from_str(&stop_cfg.locker_type).unwrap();
+        let stop = match stop_type {
+            StopType::Percent => {
+                let stop = TrailingStop::new(
+                    strategy,
+                    symbol,
+                    entry_price.clone(),
+                    stop_cfg.multiplier,
+                    transact_type,
             direction,
-            &self.db,
-        )
-        .await;
-        let stop_id = stop.local_id;
+                    &self.db,
+                )
+                .await;
+                Stop::Smart(stop)
+            }
+            StopType::Atr => {
+                let stop = AtrStop::new(
+                    strategy,
+                    symbol,
+                    entry_price.clone(),
+                    to_num!(stop_cfg.multiplier),
+                    transact_type,
+                    &self.db,
+                )
+                .await
+                .unwrap();
+                Stop::Atr(stop)
+            }
+        };
+
+        let local_id = match &stop {
+            Stop::Atr(stop) => stop.local_id,
+            Stop::Smart(stop) => stop.local_id,
+        };
         info!(
             "Strategy[{}] locker monitoring new symbol: {} entry price: {} transaction: {:?}",
             strategy,
@@ -185,13 +247,13 @@ impl Locker {
             entry_price.round_with(2),
             transact_type
         );
-        self.stops.insert(stop_id, stop);
-        stop_id
+        self.stops.insert(local_id, stop);
+        local_id
     }
 
     pub async fn update_stop(&mut self, stop_id: Uuid, entry_price: Num) {
         if let Some(stop) = self.stops.get_mut(&stop_id) {
-            stop.refresh_entry_price(entry_price);
+            stop.into().refresh_entry_price(entry_price);
             stop.persist_to_db(self.db.clone()).await.unwrap();
         } else {
             warn!("Failed to update stop, cannot find stop_id: {} ", stop_id);

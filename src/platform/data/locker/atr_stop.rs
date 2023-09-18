@@ -1,3 +1,4 @@
+
 use anyhow::bail;
 use anyhow::Ok;
 use anyhow::Result;
@@ -25,20 +26,20 @@ use crate::platform::technical_signals::TechnnicalSignals;
 use crate::to_num;
 
 #[derive(Debug, Clone, Default)]
-struct AtrStop {
-    local_id: Uuid,
-    strategy: String,
-    symbol: String,
-    entry_price: Num,
-    current_price: Num,
-    stop_price: Option<Num>,
-    zone: i16,
-    multiplier: Num,
-    watermark: Num,
-    daily_atr: Option<Num>,
-    stop_type: StopType,
-    direction: Direction,
-    status: LockerStatus,
+pub struct AtrStop {
+    pub local_id: Uuid,
+    pub strategy: String,
+    pub symbol: String,
+    pub entry_price: Num,
+    pub current_price: Num,
+    pub stop_price: Option<Num>,
+    pub zone: i16,
+    pub multiplier: Num,
+    pub watermark: Num,
+    pub daily_atr: Option<Num>,
+    pub stop_type: StopType,
+    pub direction: Direction,
+    pub status: LockerStatus,
     transact_type: TransactionType,
 }
 
@@ -93,7 +94,7 @@ impl FromRow<'_, PgRow> for AtrStop {
 }
 
 impl AtrStop {
-    async fn new(
+    pub async fn new(
         strategy: &str,
         symbol: &str,
         entry_price: Num,
