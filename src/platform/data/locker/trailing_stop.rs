@@ -8,6 +8,7 @@ use sqlx::Row;
 use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
+use tracing::debug;
 use tracing::error;
 use tracing::info;
 use uuid::Uuid;
@@ -215,7 +216,7 @@ impl TrailingStop {
                 Direction::Short => {
                     match zone {
                         4 => {
-                            if price < (entry_price * (1.0 + percentage_change)) {
+                            if price < (entry_price * (1.0 - percentage_change)) {
                                 // final trail at 1%
                                 stop_loss_level = price + (entry_price * 0.01)
                             } else {
@@ -224,13 +225,22 @@ impl TrailingStop {
                             }
                         }
                         _ => {
-                            if price < entry_price * (1.0 + percentage_change) {
+                            if price < entry_price * (1.0 - percentage_change) {
                                 continue;
                             }
                             // set trail based on zone
                             stop_loss_level -= new_trail_factor * price_change;
                         }
                     }
+                    debug!(
+                        "price {}, entry {}, % {}, stop_loss_level {}, stop_level {}, change {},",
+                        price,
+                        entry_price,
+                        percentage_change,
+                        stop_loss_level,
+                        self.stop_price,
+                        price_change
+                    );
                 }
             }
             if *zone > self.zone {

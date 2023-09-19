@@ -186,7 +186,7 @@ impl Engine {
 
     async fn handle_closing_order(&mut self, symbol: &str, order_id: Uuid) {
         self.handle_cancel(symbol, order_id).await;
-        self.transactions.reactivate_stop(symbol).await
+        self.transactions.stop_complete(symbol).await
     }
 
     async fn handle_closing_position(

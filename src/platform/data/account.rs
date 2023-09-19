@@ -20,12 +20,13 @@ impl fmt::Display for AccountDetails {
         let account = &self.account;
         write!(
             f,
-            "Account id[{}], equity[{}], cash[{}], buying_power[{}] is_margin[{}]",
+            "Account id[{}], equity[{}], cash[{}], buying power[{}] is margin[{}] pdt count[{}]",
             *account.id,
             account.equity,
             account.cash,
             account.buying_power,
-            account.shorting_enabled
+            account.shorting_enabled,
+            account.daytrade_count
         )
     }
 }
