@@ -27,10 +27,6 @@ impl OrderHandler {
         }
     }
 
-    pub async fn subscribe_to_events(&self) -> Result<()> {
-        self.connectors.subscibe_to_order_updates().await
-    }
-
     pub async fn create_position(
         &mut self,
         symbol: &str,

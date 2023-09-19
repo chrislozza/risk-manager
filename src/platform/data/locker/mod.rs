@@ -47,6 +47,34 @@ impl fmt::Display for LockerStatus {
 }
 
 #[derive(Debug, PartialEq, Clone, Copy, Default)]
+pub enum TransactionType {
+    Order,
+    #[default]
+    Position,
+}
+
+impl FromStr for TransactionType {
+    type Err = String;
+
+    fn from_str(val: &str) -> Result<Self, Self::Err> {
+        match val {
+            "Order" => std::result::Result::Ok(TransactionType::Order),
+            "Position" => std::result::Result::Ok(TransactionType::Position),
+            _ => Err(format!(
+                "Failed to parse transaction type, unknown: {}",
+                val
+            )),
+        }
+    }
+}
+
+impl fmt::Display for TransactionType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+#[derive(Debug, PartialEq, Clone, Copy, Default)]
 pub enum StopType {
     #[default]
     Percent,
@@ -68,19 +96,6 @@ impl FromStr for StopType {
 }
 
 impl fmt::Display for StopType {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
-
-#[derive(Debug, PartialEq, Clone, Copy, Default)]
-pub enum TransactionType {
-    Order,
-    #[default]
-    Position,
-}
-
-impl fmt::Display for TransactionType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:?}", self)
     }
@@ -215,8 +230,17 @@ impl Locker {
                 return false;
             }
             let stop_price = stop.price_update(trade_price.clone(), &self.db).await;
-            if stop_price > *trade_price {
+            let result = match stop.direction {
+                Direction::Long => stop_price > *trade_price,
+                Direction::Short => stop_price < *trade_price,
+            };
+            if result {
                 stop.status = LockerStatus::Disabled;
+                info!(
+                    "Closing transaction as last price: {} has crossed the stop price: {}",
+                    trade_price.clone(),
+                    stop_price
+                );
                 return true;
             }
         }

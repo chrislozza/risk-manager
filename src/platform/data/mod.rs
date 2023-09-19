@@ -387,7 +387,13 @@ impl Transactions {
         self.mktpositions.update_position(symbol).await
     }
 
-    pub async fn add_stop(&mut self, symbol: &str, strategy: &str, entry_price: Num) -> Result<()> {
+    pub async fn add_stop(
+        &mut self,
+        symbol: &str,
+        strategy: &str,
+        entry_price: Num,
+        direction: Direction,
+    ) -> Result<()> {
         if let Some(transaction) = self.transactions.get_mut(symbol) {
             info!(
                 "Strategy[{}] locker tracking {} at entry_price: {}",
@@ -400,7 +406,7 @@ impl Transactions {
                     strategy,
                     entry_price,
                     TransactionType::Order,
-                    transaction.direction,
+                    direction,
                 )
                 .await;
             transaction.locker = locker_id;

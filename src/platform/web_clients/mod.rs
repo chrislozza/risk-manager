@@ -202,15 +202,4 @@ impl Connectors {
             anyhow::Result::Ok(val) => Ok(val),
         }
     }
-
-    pub async fn subscibe_to_order_updates(&self) -> Result<()> {
-        match self
-            .websocket
-            .subscribe_to_order_updates(&self.client)
-            .await
-        {
-            Err(err) => bail!("Call to subscibe_to_order_updates failed, error={}", err),
-            val => val,
-        }
-    }
 }

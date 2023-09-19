@@ -41,12 +41,12 @@ impl fmt::Display for TrailingStop {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "price[{}], stop[{}], zone[{}] status[{}] type[{}]",
+            "price[{}], stop[{}], zone[{}] status[{}] direction[{}]",
             self.current_price.round_with(3).to_f64().unwrap(),
             self.stop_price.round_with(3).to_f64().unwrap(),
             self.zone,
             self.status,
-            self.transact_type
+            self.direction
         )
     }
 }
@@ -85,7 +85,7 @@ impl FromRow<'_, PgRow> for TrailingStop {
             direction,
             stop_type: StopType::from_str(row.try_get("type")?).unwrap(),
             status: LockerStatus::from_str(row.try_get("status")?).unwrap(),
-            transact_type: TransactionType::Position,
+            transact_type: TransactionType::from_str(row.try_get("transact_type")?).unwrap(),
         })
     }
 }
@@ -102,7 +102,10 @@ impl TrailingStop {
     ) -> Self {
         let pivot_points =
             Self::calculate_pivot_points(strategy, symbol, &entry_price, multiplier, direction);
-        let stop_price = entry_price.clone() * to_num!(1.0 - pivot_points[0].1);
+        let stop_price = match direction {
+            Direction::Long => entry_price.clone() * to_num!(1.0 - pivot_points[0].1),
+            Direction::Short => entry_price.clone() * to_num!(1.0 + pivot_points[0].1),
+        };
         let watermark = entry_price.clone();
         let current_price = entry_price.clone();
         let mut stop = TrailingStop {
@@ -114,6 +117,7 @@ impl TrailingStop {
             stop_price,
             multiplier,
             watermark,
+            direction,
             transact_type,
             ..Default::default()
         };
@@ -186,37 +190,64 @@ impl TrailingStop {
         }
         let entry_price = self.entry_price.to_f64().unwrap();
         let mut stop_loss_level = self.stop_price.to_f64().unwrap();
-        for pivot in self.pivot_points.iter() {
-            let (zone, percentage_change, new_trail_factor) = pivot;
-            match zone {
-                4 => {
-                    if price > (entry_price * (1.0 + percentage_change)) {
-                        // final trail at 1%
-                        stop_loss_level = price - (entry_price * 0.01)
-                    } else {
-                        // close distance X% -> 1%
-                        stop_loss_level += price_change * new_trail_factor
+        for (zone, percentage_change, new_trail_factor) in self.pivot_points.iter() {
+            match self.direction {
+                Direction::Long => {
+                    match zone {
+                        4 => {
+                            if price > (entry_price * (1.0 + percentage_change)) {
+                                // final trail at 1%
+                                stop_loss_level = price - (entry_price * 0.01)
+                            } else {
+                                // close distance X% -> 1%
+                                stop_loss_level += price_change * new_trail_factor
+                            }
+                        }
+                        _ => {
+                            if price > entry_price * (1.0 + percentage_change) {
+                                continue;
+                            }
+                            // set trail based on zone
+                            stop_loss_level += new_trail_factor * price_change;
+                        }
                     }
                 }
-                _ => {
-                    if price > entry_price * (1.0 + percentage_change) {
-                        continue;
+                Direction::Short => {
+                    match zone {
+                        4 => {
+                            if price < (entry_price * (1.0 + percentage_change)) {
+                                // final trail at 1%
+                                stop_loss_level = price + (entry_price * 0.01)
+                            } else {
+                                // close distance X% -> 1%
+                                stop_loss_level -= price_change * new_trail_factor
+                            }
+                        }
+                        _ => {
+                            if price < entry_price * (1.0 + percentage_change) {
+                                continue;
+                            }
+                            // set trail based on zone
+                            stop_loss_level -= new_trail_factor * price_change;
+                        }
                     }
-                    // set trail based on zone
-                    stop_loss_level += new_trail_factor * price_change;
                 }
             }
             if *zone > self.zone {
                 info!(
-                    "Price update for symbol: {}, new stop level: {} in zone: {}",
+                    "Zone update for stop: strategy: {}, symbol: {}, last price: {} new stop level: {} in zone: {}, direction: {}",
+                    self.strategy,
                     self.symbol,
+                    current_price.clone().round_with(2),
                     self.stop_price.clone().round_with(2),
-                    zone
+                    zone,
+                    self.direction
                 );
                 self.zone = *zone;
             }
             break;
         }
+
         let stop_loss_level = to_num!(stop_loss_level);
 
         self.stop_price = stop_loss_level.clone();
@@ -240,6 +271,7 @@ impl TrailingStop {
             "direction",
             "watermark",
             "status",
+            "transact_type",
             "local_id",
         ];
 
@@ -268,6 +300,7 @@ impl TrailingStop {
             .bind(self.direction.to_string())
             .bind(self.watermark.round_with(3).to_f64().unwrap())
             .bind(self.status.to_string())
+            .bind(self.transact_type.to_string())
             .bind(self.local_id)
             .execute(&db.pool)
             .await

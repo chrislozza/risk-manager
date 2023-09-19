@@ -99,6 +99,7 @@ impl AtrStop {
         entry_price: Num,
         multiplier: Num,
         transact_type: TransactionType,
+        direction: Direction,
         db: &Arc<DBClient>,
     ) -> Result<Self> {
         let watermark = entry_price.clone();
@@ -112,6 +113,7 @@ impl AtrStop {
             daily_atr: None,
             multiplier,
             watermark,
+            direction,
             transact_type,
             ..Default::default()
         };
