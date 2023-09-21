@@ -237,7 +237,8 @@ impl Locker {
             if result {
                 stop.status = LockerStatus::Disabled;
                 info!(
-                    "Closing transaction as last price: {} has crossed the stop price: {}",
+                    "Closing transaction: {} as last price: {} has crossed the stop price: {}",
+                    stop.symbol,
                     trade_price.clone(),
                     stop_price
                 );

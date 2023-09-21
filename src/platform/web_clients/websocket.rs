@@ -142,7 +142,15 @@ impl WebSocket {
                         let publisher = event_publisher.clone();
                         let shutdown = shutdown_signal.clone();
                         tokio::spawn(async move {
-                            let event = match data.unwrap().unwrap().unwrap() {
+                            if let Some(payload) = data {
+                                let data = match payload.unwrap() {
+                                    std::result::Result::Ok(val) => val,
+                                    Err(err) => {
+                                        shutdown.cancel();
+                                        return warn!("Failed to parse data, error={}", err);
+                                    }
+                                };
+                            let event = match data {
                                 stream::Data::Trade(data) => Event::Trade(data),
                                 stream::Data::Quote(data) => Event::Quote(data),
                                 stream::Data::Bar(data) => Event::Bar(data),
@@ -165,6 +173,8 @@ impl WebSocket {
                                     std::result::Result::Ok(_) => break,
                                 }
                             }
+                            };
+
                         });
                     }
                     _ = shutdown_signal.cancelled() => {
@@ -190,7 +200,15 @@ impl WebSocket {
                         let publisher = event_publisher.clone();
                         let shutdown = shutdown_signal.clone();
                         tokio::spawn(async move {
-                            let updates::OrderUpdate { event, order } = data.unwrap().unwrap().unwrap();
+                            if let Some(payload) = data {
+                                let data = match payload.unwrap() {
+                                    std::result::Result::Ok(val) => val,
+                                    Err(err) => {
+                                        shutdown.cancel();
+                                        return warn!("Failed to parse data, error={}", err);
+                                    }
+                                };
+                            let updates::OrderUpdate { event, order } = data;
                             let event =
                                 Event::OrderUpdate(updates::OrderUpdate { event, order });
                             let mut retries = 5;
@@ -210,6 +228,7 @@ impl WebSocket {
                                     std::result::Result::Ok(_) => break,
                                 }
                             }
+                        }
                         });
                     },
                         _ = shutdown_signal.cancelled() => {
