@@ -1,3 +1,4 @@
+use anyhow::bail;
 use anyhow::Ok;
 use anyhow::Result;
 use num_decimal::Num;
@@ -22,6 +23,7 @@ use super::DBClient;
 use super::MktData;
 use super::Settings;
 use crate::events::Direction;
+use crate::to_num;
 
 #[derive(Debug, PartialEq, Clone, Copy, Default)]
 pub enum LockerStatus {
@@ -107,6 +109,12 @@ impl fmt::Display for StopType {
 pub enum Stop {
     Atr(AtrStop),
     Smart(TrailingStop),
+}
+
+impl fmt::Display for Stop {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
 }
 
 #[derive(Debug)]
@@ -215,7 +223,7 @@ impl Locker {
                     entry_price.clone(),
                     stop_cfg.multiplier,
                     transact_type,
-            direction,
+                    direction,
                     &self.db,
                 )
                 .await;
@@ -228,6 +236,7 @@ impl Locker {
                     entry_price.clone(),
                     to_num!(stop_cfg.multiplier),
                     transact_type,
+                    direction,
                     &self.db,
                 )
                 .await
@@ -253,6 +262,10 @@ impl Locker {
 
     pub async fn update_stop(&mut self, stop_id: Uuid, entry_price: Num) {
         if let Some(stop) = self.stops.get_mut(&stop_id) {
+            let stop = match stop {
+                Stop::Atr(val) => val,
+                Stop::Smart(val) => val,
+            };
             stop.into().refresh_entry_price(entry_price);
             stop.persist_to_db(self.db.clone()).await.unwrap();
         } else {
@@ -262,6 +275,10 @@ impl Locker {
 
     pub async fn complete(&mut self, locker_id: Uuid) {
         if let Some(stop) = self.stops.get_mut(&locker_id) {
+            let stop = match stop {
+                Stop::Atr(val) => val,
+                Stop::Smart(val) => val,
+            };
             info!("Locker tracking symbol: {} marked as complete", stop.symbol);
             stop.status = LockerStatus::Finished;
             stop.persist_to_db(self.db.clone()).await.unwrap();
@@ -270,6 +287,11 @@ impl Locker {
 
     pub async fn revive(&mut self, locker_id: Uuid) {
         if let Some(stop) = self.stops.get_mut(&locker_id) {
+            let stop = match stop {
+                Stop::Atr(val) => val,
+                Stop::Smart(val) => val,
+            };
+            info!("Locker tracking symbol: {} being revived", stop.symbol);
             stop.status = LockerStatus::Active;
             stop.persist_to_db(self.db.clone()).await.unwrap();
         }
@@ -287,14 +309,29 @@ impl Locker {
             info!("Symbol: {locker_id:?} not being tracked in locker");
             return false;
         }
-        if let Some(stop) = self.stops.get_mut(locker_id) {
+
+        async fn check_should_close<ST>(trade_price: &Num, stop: &ST) -> Result<Num> {
             if stop.status.ne(&LockerStatus::Active) {
-                return false;
+                bail!("Not active");
             }
-            let stop_price = stop.price_update(trade_price.clone(), &self.db).await;
+            let stop_price = stop
+                .price_update(trade_price.clone(), &self.db, &self.mktdata)
+                .await;
             let result = match stop.direction {
-                Direction::Long => stop_price > *trade_price,
-                Direction::Short => stop_price < *trade_price,
+                Direction::Long => stop_price > trade_price,
+                Direction::Short => stop_price < trade_price,
+            };
+
+            if !result {
+                bail!("Don't close")
+            }
+            Ok(stop_price)
+        }
+
+        if let Some(stop) = self.stops.get_mut(locker_id) {
+            let result = match stop {
+                Stop::Atr(val) => check_should_close::<AtrStop>(trade_price, stop).await,
+                Stop::Smart(val) => check_should_close(trade_price, stop).await,
             };
             if result {
                 stop.status = LockerStatus::Disabled;

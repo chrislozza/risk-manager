@@ -1,4 +1,3 @@
-
 use anyhow::bail;
 use anyhow::Ok;
 use anyhow::Result;
@@ -150,7 +149,7 @@ impl AtrStop {
         Ok(stop)
     }
 
-    async fn price_update(
+    pub async fn price_update(
         &mut self,
         current_price: Num,
         db: &Arc<DBClient>,
@@ -196,7 +195,7 @@ impl AtrStop {
         }
     }
 
-    async fn persist_to_db(&mut self, db: Arc<DBClient>) -> Result<()> {
+    pub async fn persist_to_db(&mut self, db: Arc<DBClient>) -> Result<()> {
         let columns = vec![
             "strategy",
             "symbol",
