@@ -362,7 +362,7 @@ impl Transactions {
                 TransactionStatus::Cancelled | TransactionStatus::Waiting => {
                     if let Some(order) = self
                         .mktorders
-                        .get_order(&transaction.orders.first().unwrap())
+                        .get_order(transaction.orders.first().unwrap())
                     {
                         let stop = self.locker.print_stop(&transaction.locker);
                         info!("{} {}", order, stop);

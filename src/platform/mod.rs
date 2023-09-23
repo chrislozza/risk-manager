@@ -7,6 +7,7 @@ use anyhow::Result;
 
 mod data;
 mod engine;
+mod external_process;
 mod mktdata;
 mod order_handler;
 mod technical_signals;
@@ -14,13 +15,17 @@ mod web_clients;
 
 use engine::Engine;
 
+use self::external_process::ExternalProcess;
+
 use super::events::MktSignal;
 use super::Event;
 use crate::Settings;
 use tokio_util::sync::CancellationToken;
 
 pub struct Platform {
+    settings: Settings,
     engine: Arc<Mutex<Engine>>,
+    external_process: ExternalProcess,
     shutdown_signal: CancellationToken,
 }
 
@@ -32,16 +37,32 @@ impl Platform {
         is_live: bool,
         shutdown_signal: CancellationToken,
     ) -> Result<Self> {
-        let engine = Engine::new(settings, key, secret, is_live, shutdown_signal.clone()).await?;
+        let engine = Engine::new(
+            settings.clone(),
+            key,
+            secret,
+            is_live,
+            shutdown_signal.clone(),
+        )
+        .await?;
+        let external_process = ExternalProcess {};
 
         info!("Initialised platform components");
         Ok(Platform {
+            settings,
             engine,
+            external_process,
             shutdown_signal,
         })
     }
 
     pub async fn startup(&self) -> Result<()> {
+        if self.settings.database.enable_gcp {
+            if let Err(err) = self.external_process.launch_cloud_proxy() {
+                error!("Failed to launch third part services, error={}", err);
+                return Err(err);
+            }
+        }
         let result = self.engine.lock().await.startup().await;
         info!("Startup completed in the platform");
         result

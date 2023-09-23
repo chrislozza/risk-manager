@@ -38,7 +38,7 @@ impl GcpPubSub {
         let subscriber = self.client.subscription(&self.subscription_name);
         //subscribe
         let shutdown_signal = self.shutdown_signal.clone();
-        let _ = tokio::spawn(async move {
+        tokio::spawn(async move {
             let _ = subscriber
                 .receive(
                     move |message, _ctx| {

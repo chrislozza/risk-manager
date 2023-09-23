@@ -26,7 +26,8 @@ pub struct DatabaseConfig {
     pub port: u16,
     pub host: String,
     pub user: String,
-    pub password: String,
+    pub password: Option<String>,
+    pub enable_gcp: bool,
 }
 
 #[derive(Default, Clone, Debug, Deserialize)]

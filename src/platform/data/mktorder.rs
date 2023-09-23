@@ -132,7 +132,7 @@ impl MktOrder {
             ..Default::default()
         };
         if let Some(db) = db {
-            let _ = order.persist_db(db.clone(), Some(order_id)).await?;
+            order.persist_db(db.clone(), Some(order_id)).await?;
         }
         Ok(order)
     }
@@ -314,7 +314,7 @@ impl MktOrders {
         let orders = self.connectors.get_orders().await?;
         for order in &orders {
             if let Some(mktorder) = self.mktorders.get_mut(&order.id.0) {
-                let _ = mktorder.update_inner(order.clone(), self.db.clone());
+                let _ = mktorder.update_inner(order.clone(), self.db.clone()).await;
             }
         }
         Ok(&self.mktorders)

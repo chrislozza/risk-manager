@@ -3,6 +3,7 @@ use anyhow::Result;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::Pool;
 use sqlx::Postgres;
+use std::env;
 use std::sync::Arc;
 
 use super::Settings;
@@ -79,9 +80,15 @@ pub struct DBClient {
 impl DBClient {
     pub async fn new(settings: &Settings) -> Result<Arc<Self>> {
         let db_cfg = &settings.database;
+        let dbpass = match &db_cfg.password {
+            Some(pass) => pass.clone(),
+            None => {
+                env::var("DB_PASSWORD").expect("Failed to read the 'dbpass' environment variable.")
+            }
+        };
         let database_url = format!(
             "postgresql://{}:{}@{}:{}/{}?sslmode=disable",
-            db_cfg.user, db_cfg.password, db_cfg.host, db_cfg.port, db_cfg.name
+            db_cfg.user, dbpass, db_cfg.host, db_cfg.port, db_cfg.name
         );
         let pool = PgPoolOptions::new()
             .min_connections(2)
@@ -204,7 +211,7 @@ mod tests {
 
             if let Err(err) = sqlx::query(&stmt)
                 .bind(self.symbol.clone())
-                .bind(self.entry_price.clone())
+                .bind(self.entry_price)
                 .bind(self.exit_price)
                 .bind(self.quantity)
                 .bind(self.local_id)
@@ -242,7 +249,8 @@ mod tests {
             port: 5432,
             host: "0.0.0.0".to_string(),
             user: "test".to_string(),
-            password: "test".to_string(),
+            password: Some("test".to_string()),
+            enable_gcp: false,
         };
         let settings = Settings {
             database: db_config,
@@ -258,15 +266,13 @@ mod tests {
             quantity: 12,
         };
 
-        let _ = match transaction.persist_to_db(db_client.clone()).await {
-            Err(err) => panic!("Failed to insert into db, err={}", err),
-            _ => (),
+        if let Err(err) = transaction.persist_to_db(db_client.clone()).await {
+            panic!("Failed to insert into db, err={}", err)
         };
 
         transaction.exit_price = Some(124.1);
-        let _ = match transaction.persist_to_db(db_client.clone()).await {
-            Err(err) => panic!("Failed to update, err={}", err),
-            _ => (),
+        if let Err(err) = transaction.persist_to_db(db_client.clone()).await {
+            panic!("Failed to update, err={}", err)
         };
 
         let fetched_transaction = match transaction.fetch(db_client.clone()).await {

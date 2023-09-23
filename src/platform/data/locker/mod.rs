@@ -78,7 +78,7 @@ impl fmt::Display for TransactionType {
 pub enum StopType {
     #[default]
     Percent,
-    ATR,
+    Atr,
     Combo,
 }
 
@@ -88,7 +88,7 @@ impl FromStr for StopType {
     fn from_str(val: &str) -> Result<Self, Self::Err> {
         match val {
             "Percent" => std::result::Result::Ok(StopType::Percent),
-            "ATR" => std::result::Result::Ok(StopType::ATR),
+            "ATR" => std::result::Result::Ok(StopType::Atr),
             "Combo" => std::result::Result::Ok(StopType::Combo),
             _ => Err(format!("Failed to parse stop type, unknown: {}", val)),
         }
@@ -199,7 +199,7 @@ impl Locker {
     }
 
     pub async fn complete(&mut self, locker_id: Uuid) {
-        if let Some(mut stop) = self.stops.get_mut(&locker_id) {
+        if let Some(stop) = self.stops.get_mut(&locker_id) {
             info!("Locker tracking symbol: {} marked as complete", stop.symbol);
             stop.status = LockerStatus::Finished;
             stop.persist_to_db(self.db.clone()).await.unwrap();

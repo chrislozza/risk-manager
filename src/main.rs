@@ -1,12 +1,14 @@
-use clap::Parser;
-
 use apca::api::v2::updates::OrderUpdate;
 use apca::data::v2::stream::Bar;
 use apca::data::v2::stream::Quote;
 use apca::data::v2::stream::Trade;
-
+use clap::Parser;
+use std::env;
+use tokio::signal;
 use tokio::sync::broadcast::error::RecvError;
-
+use tokio::time::sleep;
+use tokio::time::Duration;
+use tokio_util::sync::CancellationToken;
 use tracing::error;
 use tracing::info;
 use tracing::warn;
@@ -23,14 +25,6 @@ use logging::CloudLogging;
 use platform::Platform;
 use settings::Config;
 use settings::Settings;
-
-use tokio::signal;
-
-use tokio::time::sleep;
-use tokio::time::Duration;
-use tokio_util::sync::CancellationToken;
-
-use std::env;
 
 #[derive(Debug, Clone)]
 pub enum Event {
