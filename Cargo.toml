@@ -59,3 +59,4 @@ sqlx = { version = "0.7.1", features = [
 ] }
 
 nix = { version = "0.27.1", features = ["process"] }
+async-trait = "0.1.73"
