@@ -17,6 +17,7 @@ use uuid::Uuid;
 
 use super::DBClient;
 use super::LockerStatus;
+use super::Stop;
 use super::StopType;
 use super::TransactionType;
 use crate::events::Direction;
@@ -25,21 +26,13 @@ use crate::platform::technical_signals::TechnnicalSignals;
 use crate::to_num;
 
 #[derive(Debug, Clone, Default)]
-struct AtrStop {
-    local_id: Uuid,
-    strategy: String,
-    symbol: String,
-    entry_price: Num,
-    current_price: Num,
-    stop_price: Option<Num>,
-    zone: i16,
-    multiplier: Num,
-    watermark: Num,
-    daily_atr: Option<Num>,
-    stop_type: StopType,
-    direction: Direction,
-    status: LockerStatus,
-    transact_type: TransactionType,
+pub struct AtrStop {
+    pub current_price: Num,
+    pub stop_price: Option<Num>,
+    pub zone: i16,
+    pub multiplier: Num,
+    pub watermark: Num,
+    pub daily_atr: Option<Num>,
 }
 
 impl fmt::Display for AtrStop {
@@ -93,7 +86,7 @@ impl FromRow<'_, PgRow> for AtrStop {
 }
 
 impl AtrStop {
-    async fn new(
+    pub async fn new(
         strategy: &str,
         symbol: &str,
         entry_price: Num,
@@ -149,7 +142,7 @@ impl AtrStop {
         Ok(stop)
     }
 
-    async fn price_update(
+    pub async fn price_update(
         &mut self,
         current_price: Num,
         db: &Arc<DBClient>,
@@ -195,7 +188,7 @@ impl AtrStop {
         }
     }
 
-    async fn persist_to_db(&mut self, db: Arc<DBClient>) -> Result<()> {
+    pub async fn persist_to_db(&mut self, db: Arc<DBClient>) -> Result<()> {
         let columns = vec![
             "strategy",
             "symbol",

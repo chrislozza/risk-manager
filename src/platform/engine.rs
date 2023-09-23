@@ -285,9 +285,7 @@ impl Engine {
             let symbol = order.symbol.clone();
             info!("In handle cancel reject for symbol: {}", symbol);
 
-            let action = order.action;
-
-            match action {
+            match order.action {
                 OrderAction::Create => match self.transactions.cancel_transaction(order_id).await {
                     Err(err) => {
                         error!("Failed to cancel transaction, error={}", err);
@@ -325,14 +323,8 @@ impl Engine {
             let symbol = order.symbol.clone();
             info!("In handle fill for symbol: : {}", symbol);
 
-            let fill_price = order.fill_price.clone();
-            let action = order.action;
-
-            match action {
+            match order.action {
                 OrderAction::Create => {
-                    self.transactions
-                        .update_stop_entry_price(&symbol, fill_price)
-                        .await?;
                     self.transactions.update_transaction(order_id).await?;
                 }
                 OrderAction::Liquidate => {

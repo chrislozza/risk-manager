@@ -1,23 +1,32 @@
+use anyhow::bail;
 use anyhow::Ok;
 use anyhow::Result;
 use num_decimal::Num;
+use sqlx::postgres::PgArguments;
+use sqlx::postgres::PgRow;
+use sqlx::query::Query;
+use sqlx::FromRow;
+use sqlx::Postgres;
+use sqlx::Row;
 use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tracing::error;
 use tracing::info;
-use tracing::warn;
 use uuid::Uuid;
 
-mod atr_stop;
+//mod atr_stop;
 mod trailing_stop;
 
+//use super::locker::atr_stop::AtrStop;
 use super::locker::trailing_stop::TrailingStop;
 use super::DBClient;
 use super::MktData;
 use super::Settings;
 use crate::events::Direction;
+use crate::to_num;
 
 #[derive(Debug, PartialEq, Clone, Copy, Default)]
 pub enum LockerStatus {
@@ -79,17 +88,16 @@ pub enum StopType {
     #[default]
     Percent,
     Atr,
-    Combo,
 }
 
 impl FromStr for StopType {
     type Err = String;
 
     fn from_str(val: &str) -> Result<Self, Self::Err> {
-        match val {
-            "Percent" => std::result::Result::Ok(StopType::Percent),
-            "ATR" => std::result::Result::Ok(StopType::Atr),
-            "Combo" => std::result::Result::Ok(StopType::Combo),
+        match val.to_lowercase().as_str() {
+            "pc" => std::result::Result::Ok(StopType::Percent),
+            "percent" => std::result::Result::Ok(StopType::Percent),
+            "atr" => std::result::Result::Ok(StopType::Atr),
             _ => Err(format!("Failed to parse stop type, unknown: {}", val)),
         }
     }
@@ -102,8 +110,213 @@ impl fmt::Display for StopType {
 }
 
 #[derive(Debug)]
+enum Stop {
+    Smart(TrailingStop),
+    // Atr(AtrStop),
+}
+
+impl Stop {
+    fn stop_price(&self) -> Num {
+        match self {
+            // Stop::Atr(atr) => atr.stop_price,
+            Stop::Smart(trailing) => trailing.stop_price.clone(),
+        }
+    }
+
+    fn watermark(&self) -> Num {
+        match self {
+            // Stop::Atr(atr) => atr.stop_price,
+            Stop::Smart(trailing) => trailing.watermark.clone(),
+        }
+    }
+
+    fn zone(&self) -> i16 {
+        match self {
+            // Stop::Atr(atr) => atr.stop_price,
+            Stop::Smart(trailing) => trailing.zone,
+        }
+    }
+
+    async fn price_update(
+        &mut self,
+        entry_price: Num,
+        last_price: Num,
+        _mktdata: &Arc<Mutex<MktData>>,
+    ) -> Num {
+        match self {
+            // Stop::Atr(atr) => atr.stop_price,
+            Stop::Smart(trailing) => trailing.price_update(entry_price, last_price).await,
+        }
+    }
+}
+
+#[derive(Debug)]
+struct SmartStop {
+    pub local_id: Uuid,
+    pub strategy: String,
+    pub symbol: String,
+    pub entry_price: Num,
+    pub multiplier: f64,
+    pub direction: Direction,
+    pub stop_type: StopType,
+    pub status: LockerStatus,
+    pub transact_type: TransactionType,
+    pub stop: Stop,
+}
+
+impl fmt::Display for SmartStop {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        let status = match &self.stop {
+            Stop::Smart(stop) => stop.print_status(),
+        };
+        write!(
+            f,
+            "{} status[{}] direction[{}]",
+            status, self.status, self.direction
+        )
+    }
+}
+
+impl FromRow<'_, PgRow> for SmartStop {
+    fn from_row(row: &PgRow) -> sqlx::Result<Self> {
+        fn sqlx_to_num(row: &PgRow, value: &str) -> sqlx::Result<Num> {
+            match row.try_get::<f64, _>(value) {
+                std::result::Result::Ok(val) => std::result::Result::Ok(to_num!(val)),
+                Err(err) => Err(err),
+            }
+        }
+
+        let strategy: &str = row.try_get("strategy")?;
+        let symbol: &str = row.try_get("symbol")?;
+        let multiplier: f64 = row.try_get("multiplier")?;
+        let entry_price = sqlx_to_num(row, "entry_price")?;
+        let watermark = sqlx_to_num(row, "watermark")?;
+        let stop_price = sqlx_to_num(row, "stop_price")?;
+        let zone: i16 = row.try_get("zone")?;
+        let direction = Direction::from_str(row.try_get("direction")?).unwrap();
+        let stop_type = StopType::from_str(row.try_get("type")?).unwrap();
+
+        let stop = match stop_type {
+            //StopType::Atr => AtrStop::new(),
+            StopType::Percent => {
+                let mut trail =
+                    TrailingStop::new(entry_price.clone(), watermark, multiplier, direction, zone);
+                trail.stop_price = stop_price;
+                Stop::Smart(trail)
+            }
+            _ => panic!("Panic"),
+        };
+
+        sqlx::Result::Ok(Self {
+            local_id: row.try_get("local_id")?,
+            strategy: strategy.to_string(),
+            symbol: symbol.to_string(),
+            entry_price: entry_price.clone(),
+            multiplier,
+            direction,
+            stop_type: StopType::from_str(row.try_get("type")?).unwrap(),
+            status: LockerStatus::from_str(row.try_get("status")?).unwrap(),
+            transact_type: TransactionType::from_str(row.try_get("transact_type")?).unwrap(),
+            stop,
+        })
+    }
+}
+
+impl SmartStop {
+    pub async fn new(
+        symbol: &str,
+        strategy: &str,
+        direction: Direction,
+        entry_price: Num,
+        multiplier: f64,
+        stop_type: StopType,
+        db: &Arc<DBClient>,
+    ) -> Self {
+        let stop = match stop_type {
+            StopType::Percent => Stop::Smart(TrailingStop::new(
+                entry_price.clone(),
+                entry_price.clone(),
+                multiplier,
+                direction,
+                0,
+            )),
+            //StopType::Atr => Box::new(AtrStop::new(current_price, multiplier, direction)),
+            _ => panic!("not stop"),
+        };
+        let mut stop = SmartStop {
+            local_id: Uuid::nil(),
+            strategy: strategy.to_string(),
+            symbol: symbol.to_string(),
+            entry_price,
+            multiplier,
+            direction,
+            stop_type,
+            transact_type: TransactionType::Order,
+            status: LockerStatus::Active,
+            stop,
+        };
+        if let Err(err) = stop.persist_to_db(db.clone()).await {
+            error!("Failed to persist stop to db, error={}", err);
+        }
+        stop
+    }
+
+    fn build_query<'a>(&'a self, stmt: &'a str, stop: &Stop) -> Query<'_, Postgres, PgArguments> {
+        sqlx::query(stmt)
+            .bind(self.strategy.clone())
+            .bind(self.symbol.clone())
+            .bind(self.entry_price.round_with(3).to_f64().unwrap())
+            .bind(stop.stop_price().round_with(3).to_f64().unwrap())
+            .bind(self.stop_type.to_string())
+            .bind(self.multiplier)
+            .bind(self.direction.to_string())
+            .bind(stop.watermark().round_with(3).to_f64().unwrap())
+            .bind(stop.zone())
+            .bind(self.status.to_string())
+            .bind(self.transact_type.to_string())
+            .bind(self.local_id)
+    }
+
+    pub async fn persist_to_db(&mut self, db: Arc<DBClient>) -> Result<()> {
+        let columns = vec![
+            "strategy",
+            "symbol",
+            "entry_price",
+            "stop_price",
+            "type",
+            "multiplier",
+            "direction",
+            "watermark",
+            "zone",
+            "status",
+            "transact_type",
+            "local_id",
+        ];
+
+        fn get_sql_stmt(local_id: &Uuid, columns: Vec<&str>, db: &Arc<DBClient>) -> String {
+            if Uuid::is_nil(local_id) {
+                db.query_builder
+                    .prepare_insert_statement("locker", &columns)
+            } else {
+                db.query_builder
+                    .prepare_update_statement("locker", &columns)
+            }
+        }
+
+        let stmt = get_sql_stmt(&self.local_id, columns, &db);
+        if Uuid::is_nil(&self.local_id) {
+            self.local_id = Uuid::new_v4();
+        }
+
+        if let Err(err) = self.build_query(&stmt, &self.stop).execute(&db.pool).await {
+            bail!("Locker failed to publish to db, error={}", err)
+        }
+        Ok(())
+    }
+}
+
 pub struct Locker {
-    stops: HashMap<Uuid, TrailingStop>,
+    stops: HashMap<Uuid, SmartStop>,
     settings: Settings,
     db: Arc<DBClient>,
     mktdata: Arc<Mutex<MktData>>,
@@ -122,20 +335,25 @@ impl Locker {
     pub async fn startup(&mut self) -> Result<()> {
         async fn fetch_stops(
             stmt: String,
-            status: String,
+            statuses: Vec<LockerStatus>,
             db: &Arc<DBClient>,
-        ) -> Vec<TrailingStop> {
-            match sqlx::query_as::<_, TrailingStop>(&stmt)
-                .bind(status)
-                .fetch_all(&db.pool)
-                .await
-            {
-                sqlx::Result::Ok(val) => val,
-                Err(err) => panic!(
-                    "Failed to fetch locker entries from db, closing app, error={}",
-                    err
-                ),
+        ) -> Vec<SmartStop> {
+            let mut results = Vec::new();
+            for status in statuses {
+                let rs = match sqlx::query_as::<_, SmartStop>(&stmt)
+                    .bind(status.to_string())
+                    .fetch_all(&db.pool)
+                    .await
+                {
+                    sqlx::Result::Ok(val) => val,
+                    Err(err) => panic!(
+                        "Failed to fetch locker entries from db, closing app, error={}",
+                        err
+                    ),
+                };
+                results.extend(rs);
             }
+            results
         }
 
         let columns = vec!["status"];
@@ -144,15 +362,15 @@ impl Locker {
             .query_builder
             .prepare_fetch_statement("locker", &columns);
 
-        let status = LockerStatus::Disabled.to_string();
-        let mut rows = fetch_stops(stmt.clone(), status, &self.db).await;
+        let rows = fetch_stops(
+            stmt.clone(),
+            vec![LockerStatus::Disabled, LockerStatus::Active],
+            &self.db,
+        )
+        .await;
 
-        let status = LockerStatus::Active.to_string();
-        let active_stops = fetch_stops(stmt, status, &self.db).await;
-        rows.extend(active_stops);
         for stop in rows {
-            let local_id = stop.local_id;
-            self.stops.insert(local_id, stop);
+            self.stops.insert(stop.local_id, stop);
         }
         Ok(())
     }
@@ -167,17 +385,18 @@ impl Locker {
     ) -> Uuid {
         let strategy_cfg = &self.settings.strategies[strategy];
         let stop_cfg = &self.settings.stops[&strategy_cfg.locker];
-        let stop = TrailingStop::new(
-            strategy,
+        let stop_type = StopType::from_str(&stop_cfg.locker_type).unwrap();
+        let stop = SmartStop::new(
             symbol,
+            strategy,
+            direction,
             entry_price.clone(),
             stop_cfg.multiplier,
-            transact_type,
-            direction,
+            stop_type,
             &self.db,
         )
         .await;
-        let stop_id = stop.local_id;
+
         info!(
             "Strategy[{}] locker monitoring new symbol: {} entry price: {} transaction: {:?}",
             strategy,
@@ -185,17 +404,9 @@ impl Locker {
             entry_price.round_with(2),
             transact_type
         );
-        self.stops.insert(stop_id, stop);
-        stop_id
-    }
-
-    pub async fn update_stop(&mut self, stop_id: Uuid, entry_price: Num) {
-        if let Some(stop) = self.stops.get_mut(&stop_id) {
-            stop.refresh_entry_price(entry_price);
-            stop.persist_to_db(self.db.clone()).await.unwrap();
-        } else {
-            warn!("Failed to update stop, cannot find stop_id: {} ", stop_id);
-        }
+        let local_id = stop.local_id;
+        self.stops.insert(local_id, stop);
+        local_id
     }
 
     pub async fn complete(&mut self, locker_id: Uuid) {
@@ -208,6 +419,7 @@ impl Locker {
 
     pub async fn revive(&mut self, locker_id: Uuid) {
         if let Some(stop) = self.stops.get_mut(&locker_id) {
+            info!("Locker tracking symbol: {} being revived", stop.symbol);
             stop.status = LockerStatus::Active;
             stop.persist_to_db(self.db.clone()).await.unwrap();
         }
@@ -220,27 +432,54 @@ impl Locker {
         }
     }
 
-    pub async fn should_close(&mut self, locker_id: &Uuid, trade_price: &Num) -> bool {
+    pub async fn should_close(&mut self, locker_id: &Uuid, last_price: &Num) -> bool {
         if !self.stops.contains_key(locker_id) {
             info!("Symbol: {locker_id:?} not being tracked in locker");
             return false;
         }
-        if let Some(stop) = self.stops.get_mut(locker_id) {
-            if stop.status.ne(&LockerStatus::Active) {
-                return false;
+
+        async fn check_should_close(
+            last_price: &Num,
+            smart: &mut SmartStop,
+            db: &Arc<DBClient>,
+            mktdata: &Arc<Mutex<MktData>>,
+        ) -> Result<Num> {
+            if smart.status.ne(&LockerStatus::Active) {
+                bail!("Not active");
             }
-            let stop_price = stop.price_update(trade_price.clone(), &self.db).await;
-            let result = match stop.direction {
-                Direction::Long => stop_price > *trade_price,
-                Direction::Short => stop_price < *trade_price,
+            let current_stop = smart.stop.stop_price();
+            let stop_price = smart
+                .stop
+                .price_update(smart.entry_price.clone(), last_price.clone(), mktdata)
+                .await;
+
+            if smart.status == LockerStatus::Disabled {
+                return Ok(stop_price);
+            }
+            if current_stop != stop_price && smart.transact_type == TransactionType::Position {
+                let _ = smart.persist_to_db(db.clone()).await;
+            }
+            let result = match smart.direction {
+                Direction::Long => stop_price > *last_price,
+                Direction::Short => stop_price < *last_price,
             };
-            if result {
-                stop.status = LockerStatus::Disabled;
+
+            if !result {
+                bail!("Don't close")
+            }
+            Ok(stop_price)
+        }
+
+        if let Some(smart) = self.stops.get_mut(locker_id) {
+            if let anyhow::Result::Ok(stop_price) =
+                check_should_close(last_price, smart, &self.db, &self.mktdata).await
+            {
+                smart.status = LockerStatus::Disabled;
                 info!(
                     "Closing transaction: {} as last price: {} has crossed the stop price: {}",
-                    stop.symbol,
-                    trade_price.clone(),
-                    stop_price
+                    smart.symbol,
+                    last_price.clone(),
+                    stop_price,
                 );
                 return true;
             }

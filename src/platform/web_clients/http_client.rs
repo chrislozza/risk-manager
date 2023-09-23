@@ -7,7 +7,6 @@ use anyhow::bail;
 use anyhow::Result;
 use http_endpoint::Endpoint;
 
-use tracing::error;
 use tracing::warn;
 
 use tokio_util::sync::CancellationToken;
@@ -30,12 +29,13 @@ impl HttpClient {
         loop {
             match client.issue::<E>(input).await {
                 Err(apca::RequestError::Endpoint(err)) => {
-                    warn!("Request failed, error: {err}");
+                    warn!("Request failed, endpoint error: {err}");
                 }
-                Err(err) => {
-                    error!("Request error={}", err);
-                    self.shutdown_signal.cancel();
-                    bail!("Unknown error: {err}, exiting");
+                Err(apca::RequestError::Hyper(err)) => {
+                    warn!("Request failed, hyper error: {err}");
+                }
+                Err(apca::RequestError::Io(err)) => {
+                    warn!("Request failed, io error: {err}");
                 }
                 Ok(payload) => return Ok(payload),
             };

@@ -442,19 +442,6 @@ impl Transactions {
             );
         }
     }
-    pub async fn update_stop_entry_price(&mut self, symbol: &str, entry_price: Num) -> Result<()> {
-        if let Some(transaction) = self.transactions.get(symbol) {
-            self.locker
-                .update_stop(transaction.locker, entry_price)
-                .await;
-        } else {
-            warn!(
-                "Unable to update locker, transaction not found for symbol: {}",
-                symbol
-            );
-        };
-        Ok(())
-    }
 
     pub async fn stop_complete(&mut self, symbol: &str) {
         if let Some(transaction) = self.transactions.get(symbol) {
