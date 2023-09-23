@@ -120,15 +120,11 @@ impl WebSocket {
                                     }
 
                                 };
-                                match stream::drive(subscribe, &mut stream).await.unwrap().unwrap() {
-                                    Err(err) =>
-                                    {
+                                if let Err(err) = stream::drive(subscribe, &mut stream).await.unwrap().unwrap() {
                                         error!("Subscribe error in the stream drive: {err:?}");
                                         shutdown_signal.cancel();
                                         break
-                                    }
-                                    _ => ()
-                                }
+                                };
                             }
                             Err(RecvError::Lagged(err)) => warn!("Publisher channel skipping a number of messages: {}", err),
                             Err(RecvError::Closed) => {
@@ -150,31 +146,25 @@ impl WebSocket {
                                         return warn!("Failed to parse data, error={}", err);
                                     }
                                 };
-                            let event = match data {
-                                stream::Data::Trade(data) => Event::Trade(data),
-                                stream::Data::Quote(data) => Event::Quote(data),
-                                stream::Data::Bar(data) => Event::Bar(data),
-                                _ => return,
-                            };
-                            let mut retries = 5;
-                            loop {
-                                match publisher.send(event.clone()) {
-                                    Err(broadcast::error::SendError(data)) => {
-                                        error!("{data:?}");
-                                        match retries {
-                                            0 => {
-                                                error!("Max retries reached, closing app");
-                                                shutdown.cancel();
-                                                break
-                                            },
-                                            _ => retries -= 1
-                                        }
+                                let event = match data {
+                                    stream::Data::Trade(data) => Event::Trade(data),
+                                    stream::Data::Quote(data) => Event::Quote(data),
+                                    stream::Data::Bar(data) => Event::Bar(data),
+                                    _ => return,
+                                };
+                                let mut retries = 5;
+                                while let Err(broadcast::error::SendError(data)) = publisher.send(event.clone()) {
+                                    error!("{data:?}");
+                                    match retries {
+                                        0 => {
+                                            error!("Max retries reached, closing app");
+                                            shutdown.cancel();
+                                            break
+                                        },
+                                        _ => retries -= 1
                                     }
-                                    std::result::Result::Ok(_) => break,
                                 }
-                            }
                             };
-
                         });
                     }
                     _ = shutdown_signal.cancelled() => {
@@ -212,20 +202,15 @@ impl WebSocket {
                             let event =
                                 Event::OrderUpdate(updates::OrderUpdate { event, order });
                             let mut retries = 5;
-                            loop {
-                                match publisher.send(event.clone()) {
-                                    Err(broadcast::error::SendError(data)) => {
-                                        error!("{data:?}");
-                                        match retries {
-                                            0 => {
-                                                error!("Max retries reached, closing app");
-                                                shutdown.cancel();
-                                                break
-                                            },
-                                            _ => retries -= 1
-                                        }
-                                    }
-                                    std::result::Result::Ok(_) => break,
+                            while let Err(broadcast::error::SendError(data)) = publisher.send(event.clone()) {
+                                error!("{data:?}");
+                                match retries {
+                                    0 => {
+                                        error!("Max retries reached, closing app");
+                                        shutdown.cancel();
+                                        break
+                                    },
+                                    _ => retries -= 1
                                 }
                             }
                         }

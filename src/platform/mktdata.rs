@@ -77,7 +77,7 @@ impl MktData {
                     .entry(symbol.to_string())
                     .or_insert_with(|| None);
             }
-            let _ = self.batch_subscribe(symbols).await?;
+            self.batch_subscribe(symbols).await?
         }
         info!("Mktdata startup complete");
         Ok(())
@@ -90,18 +90,16 @@ impl MktData {
 
     pub async fn subscribe(&mut self, symbol: &str) -> Result<()> {
         let symbols = vec![symbol.to_string()];
-        let _ = self.batch_subscribe(symbols).await?;
+        self.batch_subscribe(symbols).await?;
         self.snapshots.insert(symbol.to_string(), None);
         Ok(())
     }
 
     pub async fn unsubscribe(&mut self, symbol: &str) -> Result<()> {
         info!("Unsubscribing from market data for symbol: {}", symbol);
-        let _ = self
-            .connectors
+        self.connectors
             .unsubscribe_from_symbols(vec![symbol.to_string()].into())
-            .await?;
-        std::result::Result::Ok(())
+            .await
     }
 
     pub fn get_snapshots(&mut self) -> HashMap<String, Snapshot> {

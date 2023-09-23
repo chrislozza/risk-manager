@@ -219,8 +219,8 @@ impl Engine {
             let symbol = transaction.symbol.clone();
             match transaction.status {
                 TransactionStatus::Waiting => {
-                    let order_id = transaction.orders.first().unwrap().clone();
-                    self.handle_closing_order(&symbol, order_id).await
+                    let order_id = transaction.orders.first().unwrap();
+                    self.handle_closing_order(&symbol, *order_id).await
                 }
                 TransactionStatus::Confirmed => match self.handle_liquidate(&symbol).await {
                     Some(order_id) => {
