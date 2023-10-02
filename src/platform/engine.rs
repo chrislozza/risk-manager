@@ -330,9 +330,6 @@ impl Engine {
 
             match action {
                 OrderAction::Create => {
-                    self.transactions
-                        .update_stop_entry_price(&symbol, fill_price)
-                        .await?;
                     self.transactions.update_transaction(order_id).await?;
                 }
                 OrderAction::Liquidate => {

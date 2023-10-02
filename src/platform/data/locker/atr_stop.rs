@@ -17,6 +17,7 @@ use uuid::Uuid;
 
 use super::DBClient;
 use super::LockerStatus;
+use super::Stop;
 use super::StopType;
 use super::TransactionType;
 use crate::events::Direction;
@@ -26,20 +27,12 @@ use crate::to_num;
 
 #[derive(Debug, Clone, Default)]
 pub struct AtrStop {
-    pub local_id: Uuid,
-    pub strategy: String,
-    pub symbol: String,
-    pub entry_price: Num,
     pub current_price: Num,
     pub stop_price: Option<Num>,
     pub zone: i16,
     pub multiplier: Num,
     pub watermark: Num,
     pub daily_atr: Option<Num>,
-    pub stop_type: StopType,
-    pub direction: Direction,
-    pub status: LockerStatus,
-    transact_type: TransactionType,
 }
 
 impl fmt::Display for AtrStop {
