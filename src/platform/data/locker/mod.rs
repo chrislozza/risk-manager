@@ -17,11 +17,11 @@ use tracing::error;
 use tracing::info;
 use uuid::Uuid;
 
-//mod atr_stop;
-mod trailing_stop;
+mod atr_stop;
+mod smart_trail;
 
-//use super::locker::atr_stop::AtrStop;
-use super::locker::trailing_stop::TrailingStop;
+use super::locker::atr_stop::AtrStop;
+use super::locker::smart_trail::SmartTrail;
 use super::DBClient;
 use super::MktData;
 use super::Settings;
@@ -111,40 +111,41 @@ impl fmt::Display for StopType {
 
 #[derive(Debug)]
 enum Stop {
-    Smart(TrailingStop),
-    // Atr(AtrStop),
+    Smart(SmartTrail),
+    Atr(AtrStop),
 }
 
 impl Stop {
     fn stop_price(&self) -> Num {
         match self {
-            // Stop::Atr(atr) => atr.stop_price,
+            Stop::Atr(atr) => atr.stop_price.clone(),
             Stop::Smart(trailing) => trailing.stop_price.clone(),
         }
     }
 
     fn watermark(&self) -> Num {
         match self {
-            // Stop::Atr(atr) => atr.stop_price,
+            Stop::Atr(atr) => atr.stop_price.clone(),
             Stop::Smart(trailing) => trailing.watermark.clone(),
         }
     }
 
     fn zone(&self) -> i16 {
         match self {
-            // Stop::Atr(atr) => atr.stop_price,
+            Stop::Atr(atr) => atr.zone,
             Stop::Smart(trailing) => trailing.zone,
         }
     }
 
     async fn price_update(
         &mut self,
+        symbol: &str,
         entry_price: Num,
         last_price: Num,
-        _mktdata: &Arc<Mutex<MktData>>,
-    ) -> Num {
+        mktdata: &Arc<Mutex<MktData>>,
+    ) -> Result<Num> {
         match self {
-            // Stop::Atr(atr) => atr.stop_price,
+            Stop::Atr(atr) => atr.price_update(symbol, last_price, mktdata).await,
             Stop::Smart(trailing) => trailing.price_update(entry_price, last_price).await,
         }
     }
@@ -168,6 +169,7 @@ impl fmt::Display for SmartStop {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         let status = match &self.stop {
             Stop::Smart(stop) => stop.print_status(),
+            Stop::Atr(stop) => stop.print_status(),
         };
         write!(
             f,
@@ -186,8 +188,6 @@ impl FromRow<'_, PgRow> for SmartStop {
             }
         }
 
-        let strategy: &str = row.try_get("strategy")?;
-        let symbol: &str = row.try_get("symbol")?;
         let multiplier: f64 = row.try_get("multiplier")?;
         let entry_price = sqlx_to_num(row, "entry_price")?;
         let watermark = sqlx_to_num(row, "watermark")?;
@@ -197,20 +197,23 @@ impl FromRow<'_, PgRow> for SmartStop {
         let stop_type = StopType::from_str(row.try_get("type")?).unwrap();
 
         let stop = match stop_type {
-            //StopType::Atr => AtrStop::new(),
-            StopType::Percent => {
-                let mut trail =
-                    TrailingStop::new(entry_price.clone(), watermark, multiplier, direction, zone);
-                trail.stop_price = stop_price;
-                Stop::Smart(trail)
-            }
-            _ => panic!("Panic"),
+            StopType::Atr => Stop::Atr(AtrStop::new(
+                watermark, multiplier, direction, zone, stop_price,
+            )),
+            StopType::Percent => Stop::Smart(SmartTrail::new(
+                entry_price.clone(),
+                watermark,
+                multiplier,
+                direction,
+                zone,
+                stop_price,
+            )),
         };
 
-        sqlx::Result::Ok(Self {
+        sqlx::Result::Ok(SmartStop {
             local_id: row.try_get("local_id")?,
-            strategy: strategy.to_string(),
-            symbol: symbol.to_string(),
+            strategy: row.try_get("strategy")?,
+            symbol: row.try_get("symbol")?,
             entry_price: entry_price.clone(),
             multiplier,
             direction,
@@ -233,15 +236,21 @@ impl SmartStop {
         db: &Arc<DBClient>,
     ) -> Self {
         let stop = match stop_type {
-            StopType::Percent => Stop::Smart(TrailingStop::new(
+            StopType::Percent => Stop::Smart(SmartTrail::new(
                 entry_price.clone(),
                 entry_price.clone(),
                 multiplier,
                 direction,
                 0,
+                to_num!(0.0),
             )),
-            //StopType::Atr => Box::new(AtrStop::new(current_price, multiplier, direction)),
-            _ => panic!("not stop"),
+            StopType::Atr => Stop::Atr(AtrStop::new(
+                entry_price.clone(),
+                multiplier,
+                direction,
+                0,
+                to_num!(0.0),
+            )),
         };
         let mut stop = SmartStop {
             local_id: Uuid::nil(),
@@ -293,17 +302,7 @@ impl SmartStop {
             "local_id",
         ];
 
-        fn get_sql_stmt(local_id: &Uuid, columns: Vec<&str>, db: &Arc<DBClient>) -> String {
-            if Uuid::is_nil(local_id) {
-                db.query_builder
-                    .prepare_insert_statement("locker", &columns)
-            } else {
-                db.query_builder
-                    .prepare_update_statement("locker", &columns)
-            }
-        }
-
-        let stmt = get_sql_stmt(&self.local_id, columns, &db);
+        let stmt = db.get_sql_stmt("locker", &self.local_id, columns, &db);
         if Uuid::is_nil(&self.local_id) {
             self.local_id = Uuid::new_v4();
         }
@@ -439,6 +438,7 @@ impl Locker {
         }
 
         async fn check_should_close(
+            symbol: &str,
             last_price: &Num,
             smart: &mut SmartStop,
             db: &Arc<DBClient>,
@@ -450,8 +450,13 @@ impl Locker {
             let current_stop = smart.stop.stop_price();
             let stop_price = smart
                 .stop
-                .price_update(smart.entry_price.clone(), last_price.clone(), mktdata)
-                .await;
+                .price_update(
+                    symbol,
+                    smart.entry_price.clone(),
+                    last_price.clone(),
+                    mktdata,
+                )
+                .await?;
 
             if smart.status == LockerStatus::Disabled {
                 return Ok(stop_price);
@@ -471,8 +476,9 @@ impl Locker {
         }
 
         if let Some(smart) = self.stops.get_mut(locker_id) {
+            let symbol = smart.symbol.clone();
             if let anyhow::Result::Ok(stop_price) =
-                check_should_close(last_price, smart, &self.db, &self.mktdata).await
+                check_should_close(&symbol, last_price, smart, &self.db, &self.mktdata).await
             {
                 smart.status = LockerStatus::Disabled;
                 info!(

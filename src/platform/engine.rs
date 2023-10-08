@@ -275,7 +275,7 @@ impl Engine {
             updates::OrderStatus::Canceled => {
                 self.handle_cancel_reject(order_id).await?;
             }
-            _ => info!("Not listening to event {0:?}", order_update.event),
+            _ => info!("Not listening to event {:?}", order_update.event),
         }
         Ok(())
     }

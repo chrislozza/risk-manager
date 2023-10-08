@@ -5,6 +5,7 @@ use sqlx::Pool;
 use sqlx::Postgres;
 use std::env;
 use std::sync::Arc;
+use uuid::Uuid;
 
 use super::Settings;
 
@@ -101,6 +102,22 @@ impl DBClient {
             pool,
             query_builder: SqlQueryBuilder {},
         }))
+    }
+
+    pub fn get_sql_stmt(
+        &self,
+        table_name: &str,
+        local_id: &Uuid,
+        columns: Vec<&str>,
+        db: &Arc<DBClient>,
+    ) -> String {
+        if Uuid::is_nil(local_id) {
+            db.query_builder
+                .prepare_insert_statement(table_name, &columns)
+        } else {
+            db.query_builder
+                .prepare_update_statement(table_name, &columns)
+        }
     }
 }
 
