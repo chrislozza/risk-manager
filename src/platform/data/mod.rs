@@ -4,8 +4,11 @@ use anyhow::Result;
 use chrono::DateTime;
 use chrono::Utc;
 use num_decimal::Num;
+use sqlx::postgres::PgArguments;
 use sqlx::postgres::PgRow;
+use sqlx::query::Query;
 use sqlx::FromRow;
+use sqlx::Postgres;
 use sqlx::Row;
 use std::collections::HashMap;
 use std::fmt;
@@ -13,10 +16,10 @@ use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tracing::debug;
-use tracing::error;
 use tracing::info;
 use tracing::warn;
 use uuid::Uuid;
+
 pub mod account;
 pub mod assets;
 mod db_client;
@@ -93,32 +96,37 @@ pub struct Transaction {
 
 impl FromRow<'_, PgRow> for Transaction {
     fn from_row(row: &PgRow) -> sqlx::Result<Self> {
-        let quantity: i64 = row.try_get("quantity")?;
-        let entry_price: f64 = row.try_get("entry_price")?;
-        let exit_price: f64 = row.try_get("exit_price")?;
-        let pnl: f64 = row.try_get("pnl")?;
-        let roi: f64 = row.try_get("roi")?;
-        let cost_basis: f64 = row.try_get("cost_basis")?;
-        let order_str: &str = row.try_get("orders")?;
-        let orders = order_str
-            .split(',')
-            .map(|x| Uuid::from_str(x).unwrap())
-            .collect();
+        fn sqlx_to_num(row: &PgRow, value: &str) -> sqlx::Result<Num> {
+            match row.try_get::<f64, _>(value) {
+                std::result::Result::Ok(val) => std::result::Result::Ok(to_num!(val)),
+                Err(err) => Err(err),
+            }
+        }
+
+        fn get_orders_from_row(order_str: &str) -> Result<Vec<Uuid>> {
+            if order_str.is_empty() {
+                bail!("Failed to pull orders from DB")
+            }
+            Ok(order_str
+                .split(',')
+                .map(|x| Uuid::from_str(x).unwrap())
+                .collect())
+        }
 
         sqlx::Result::Ok(Self {
             local_id: row.try_get("local_id")?,
             strategy: row.try_get("strategy")?,
             symbol: row.try_get("symbol")?,
             locker: row.try_get("locker")?,
-            orders,
+            orders: get_orders_from_row(row.try_get("orders")?).unwrap(),
             entry_time: row.try_get("entry_time")?,
             exit_time: row.try_get("exit_time")?,
-            entry_price: to_num!(entry_price),
-            exit_price: to_num!(exit_price),
-            quantity: Num::from(quantity),
-            pnl: to_num!(pnl),
-            roi: to_num!(roi),
-            cost_basis: to_num!(cost_basis),
+            entry_price: sqlx_to_num(row, "entry_price")?,
+            exit_price: sqlx_to_num(row, "exit_price")?,
+            quantity: Num::from(row.try_get::<i64, &str>("quantity")?),
+            pnl: sqlx_to_num(row, "pnl")?,
+            roi: sqlx_to_num(row, "roi")?,
+            cost_basis: sqlx_to_num(row, "cost_basis")?,
             direction: Direction::from_str(row.try_get("direction")?).unwrap(),
             status: TransactionStatus::from_str(row.try_get("status")?).unwrap(),
         })
@@ -197,6 +205,29 @@ impl Transaction {
         let _ = self.persist_db(db.clone()).await;
     }
 
+    fn build_query<'a>(
+        &'a self,
+        stmt: &'a str,
+        order_string: &'a str,
+    ) -> Query<'_, Postgres, PgArguments> {
+        sqlx::query(stmt)
+            .bind(self.strategy.clone())
+            .bind(self.symbol.clone())
+            .bind(self.locker)
+            .bind(order_string)
+            .bind(self.entry_time)
+            .bind(self.exit_time)
+            .bind(self.entry_price.round_with(3).to_f64())
+            .bind(self.exit_price.round_with(3).to_f64())
+            .bind(self.quantity.to_i64())
+            .bind(self.pnl.round_with(3).to_f64())
+            .bind(self.roi.round_with(3).to_f64())
+            .bind(self.cost_basis.round_with(3).to_f64())
+            .bind(self.direction.to_string())
+            .bind(self.status.to_string())
+            .bind(self.local_id)
+    }
+
     pub async fn persist_db(&mut self, db: Arc<DBClient>) -> Result<()> {
         let columns = vec![
             "strategy",
@@ -239,27 +270,12 @@ impl Transaction {
 
         let _ = order_string.pop();
 
-        if let Err(err) = sqlx::query(&stmt)
-            .bind(self.strategy.clone())
-            .bind(self.symbol.clone())
-            .bind(self.locker)
-            .bind(order_string)
-            .bind(self.entry_time)
-            .bind(self.exit_time)
-            .bind(self.entry_price.round_with(3).to_f64())
-            .bind(self.exit_price.round_with(3).to_f64())
-            .bind(self.quantity.to_i64())
-            .bind(self.pnl.round_with(3).to_f64())
-            .bind(self.roi.round_with(3).to_f64())
-            .bind(self.cost_basis.round_with(3).to_f64())
-            .bind(self.direction.to_string())
-            .bind(self.status.to_string())
-            .bind(self.local_id)
+        if let Err(err) = self
+            .build_query(&stmt, &order_string)
             .execute(&db.pool)
             .await
         {
-            error!("Failed to publish to db, error={}", err);
-            anyhow::bail!(err)
+            bail!("Locker failed to publish to db, error={}", err)
         }
         Ok(())
     }
