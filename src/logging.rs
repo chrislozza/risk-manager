@@ -1,18 +1,4 @@
 use anyhow::Result;
-
-use tokio::sync::broadcast;
-use tokio_util::sync::CancellationToken;
-
-use std::str::FromStr;
-use tracing::Event;
-use tracing::Level;
-use tracing::Subscriber;
-use tracing_subscriber::filter;
-
-use tracing_subscriber::layer::Context;
-use tracing_subscriber::prelude::*;
-use tracing_subscriber::Layer;
-
 use gcloud_sdk::google::api::MonitoredResource;
 use gcloud_sdk::google::logging::r#type::LogSeverity;
 use gcloud_sdk::google::logging::v2::log_entry::Payload;
@@ -20,6 +6,17 @@ use gcloud_sdk::google::logging::v2::logging_service_v2_client::LoggingServiceV2
 use gcloud_sdk::google::logging::v2::LogEntry;
 use gcloud_sdk::google::logging::v2::WriteLogEntriesRequest;
 use gcloud_sdk::GoogleApi;
+use std::str::FromStr;
+use tokio::sync::broadcast;
+use tokio_util::sync::CancellationToken;
+use tracing::error;
+use tracing::Event;
+use tracing::Level;
+use tracing::Subscriber;
+use tracing_subscriber::filter;
+use tracing_subscriber::layer::Context;
+use tracing_subscriber::prelude::*;
+use tracing_subscriber::Layer;
 
 #[derive(Debug, Clone)]
 struct CloudLogPayload {
@@ -149,14 +146,17 @@ impl CloudLogging {
                             severity: severity.into(),
                             ..Default::default()
                         };
-                        gcp
+                        if let Err(err) = gcp
                             .get()
                             .write_log_entries(tonic::Request::new(WriteLogEntriesRequest {
                                 log_name: name.to_string(),
                                 entries: vec![ log_entry ],
                                 ..Default::default()
                             }))
-                        .await.unwrap();
+                        .await {
+                            error!("Failed to write log entries to gcp, error={}", err);
+                            shutdown_signal.cancel()
+                        }
                     }
                     _ = shutdown_signal.cancelled() => {
                         break;

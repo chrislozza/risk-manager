@@ -13,6 +13,7 @@ use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tracing::debug;
 use tracing::error;
 use tracing::info;
 use uuid::Uuid;
@@ -264,7 +265,7 @@ impl SmartStop {
             status: LockerStatus::Active,
             stop,
         };
-        if let Err(err) = stop.persist_to_db(db.clone()).await {
+        if let Err(err) = stop.persist_to_db(db).await {
             error!("Failed to persist stop to db, error={}", err);
         }
         stop
@@ -286,7 +287,7 @@ impl SmartStop {
             .bind(self.local_id)
     }
 
-    pub async fn persist_to_db(&mut self, db: Arc<DBClient>) -> Result<()> {
+    pub async fn persist_to_db(&mut self, db: &Arc<DBClient>) -> Result<()> {
         let columns = vec![
             "strategy",
             "symbol",
@@ -302,7 +303,7 @@ impl SmartStop {
             "local_id",
         ];
 
-        let stmt = db.get_sql_stmt("locker", &self.local_id, columns, &db);
+        let stmt = db.get_sql_stmt("locker", &self.local_id, columns, db);
         if Uuid::is_nil(&self.local_id) {
             self.local_id = Uuid::new_v4();
         }
@@ -408,11 +409,21 @@ impl Locker {
         local_id
     }
 
+    pub async fn start_tracking_position(&mut self, locker_id: Uuid) -> Result<()> {
+        if let Some(stop) = self.stops.get_mut(&locker_id) {
+            if stop.transact_type != TransactionType::Position {
+                stop.transact_type = TransactionType::Position;
+                stop.persist_to_db(&self.db).await?
+            }
+        }
+        Ok(())
+    }
+
     pub async fn complete(&mut self, locker_id: Uuid) {
         if let Some(stop) = self.stops.get_mut(&locker_id) {
             info!("Locker tracking symbol: {} marked as complete", stop.symbol);
             stop.status = LockerStatus::Finished;
-            stop.persist_to_db(self.db.clone()).await.unwrap();
+            stop.persist_to_db(&self.db).await.unwrap();
         }
     }
 
@@ -420,7 +431,7 @@ impl Locker {
         if let Some(stop) = self.stops.get_mut(&locker_id) {
             info!("Locker tracking symbol: {} being revived", stop.symbol);
             stop.status = LockerStatus::Active;
-            stop.persist_to_db(self.db.clone()).await.unwrap();
+            stop.persist_to_db(&self.db).await.unwrap();
         }
     }
 
@@ -462,7 +473,7 @@ impl Locker {
                 return Ok(stop_price);
             }
             if current_stop != stop_price && smart.transact_type == TransactionType::Position {
-                let _ = smart.persist_to_db(db.clone()).await;
+                let _ = smart.persist_to_db(db).await;
             }
             let result = match smart.direction {
                 Direction::Long => stop_price > *last_price,

@@ -84,13 +84,13 @@ impl MktPositions {
         }
     }
 
-    pub async fn update_positions(&mut self) -> Result<&HashMap<String, MktPosition>> {
+    pub async fn update_positions(&mut self) -> Result<Vec<MktPosition>> {
         let positions = self.connectors.get_positions().await?;
         for position in &positions {
             if let Some(mktposition) = self.mktpositions.get_mut(&position.symbol) {
                 mktposition.update_inner(position.clone());
             }
         }
-        Ok(&self.mktpositions)
+        Ok(self.mktpositions.values().cloned().collect())
     }
 }

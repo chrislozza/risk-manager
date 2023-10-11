@@ -23,7 +23,7 @@ use crate::events::Direction;
 use crate::platform::web_clients::Connectors;
 use crate::to_num;
 
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub enum OrderStatus {
     #[default]
     Waiting,
@@ -230,12 +230,13 @@ impl fmt::Display for MktOrder {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "Order strategy[{}], symbol[{}], entry_price[{}], size[{}] action[{}]",
+            "Order strategy[{}], symbol[{}], entry_price[{}], size[{}] action[{}] status[{}]",
             self.strategy,
             self.symbol,
             self.entry_price.round_with(3).to_f64().unwrap(),
             self.quantity.round_with(3).to_i64().unwrap(),
-            self.action
+            self.action,
+            self.status
         )
     }
 }
@@ -255,28 +256,25 @@ impl MktOrders {
         }
     }
 
-    pub async fn startup(&mut self, order_ids: Vec<Uuid>) -> Result<Vec<&MktOrder>> {
-        for order_id in order_ids {
-            let columns = vec!["local_id"];
-            let stmt = self
-                .db
-                .query_builder
-                .prepare_fetch_statement("mktorder", &columns);
-            let mktorder = match sqlx::query_as::<_, MktOrder>(&stmt)
-                .bind(order_id)
-                .fetch_one(&self.db.pool)
-                .await
-            {
-                sqlx::Result::Ok(val) => val,
-                Err(err) => panic!(
-                    "Failed to fetch transactions from db, err={}, closing app",
-                    err
-                ),
-            };
-            self.mktorders.insert(order_id, mktorder);
-        }
-        let mktorders = Vec::from_iter(self.mktorders.values());
-        Ok(mktorders)
+    pub async fn load_from_db(&mut self, order_id: Uuid) -> Result<MktOrder> {
+        let columns = vec!["local_id"];
+        let stmt = self
+            .db
+            .query_builder
+            .prepare_fetch_statement("mktorder", &columns);
+        let mktorder = match sqlx::query_as::<_, MktOrder>(&stmt)
+            .bind(order_id)
+            .fetch_one(&self.db.pool)
+            .await
+        {
+            sqlx::Result::Ok(val) => val,
+            Err(err) => panic!(
+                "Failed to fetch transactions from db, err={}, closing app",
+                err
+            ),
+        };
+        self.mktorders.insert(order_id, mktorder.clone());
+        Ok(mktorder)
     }
 
     pub async fn add_order(
@@ -308,10 +306,9 @@ impl MktOrders {
         if let Some(mktorder) = self.mktorders.get_mut(order_id) {
             Ok(mktorder.update_inner(order, self.db.clone()).await?.clone())
         } else {
-            bail!(
+            panic!(
                 "MktOrder {} with order_id: {} not found",
-                order.symbol,
-                order_id
+                order.symbol, order_id
             )
         }
     }

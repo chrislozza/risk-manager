@@ -1,34 +1,26 @@
+use anyhow::bail;
 use anyhow::Ok;
-
+use anyhow::Result;
+use apca::api::v2::updates;
+use apca::data::v2::stream;
+use num_decimal::Num;
 use std::sync::Arc;
+use tokio::sync::broadcast::Receiver;
 use tokio::sync::Mutex;
 use tokio::time::interval;
 use tokio::time::Duration;
-
+use tokio_util::sync::CancellationToken;
 use tracing::debug;
 use tracing::error;
 use tracing::info;
 use tracing::warn;
-
-use apca::api::v2::updates;
-use apca::data::v2::stream;
-
-use num_decimal::Num;
-
-use anyhow::bail;
-use anyhow::Result;
-
-use tokio::sync::broadcast::Receiver;
-use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use super::super::events::MktSignal;
 use super::data::account::AccountDetails;
 use super::data::assets::Assets;
-use super::data::TransactionStatus;
-
 use super::data::mktorder::OrderAction;
-
+use super::data::TransactionStatus;
 use super::data::Transactions;
 use super::mktdata::MktData;
 use super::order_handler::OrderHandler;
@@ -85,6 +77,16 @@ impl Engine {
     }
 
     pub async fn create_position(&mut self, mkt_signal: &MktSignal) -> Result<()> {
+        let strategy = &mkt_signal.strategy;
+        let max_positions = self.settings.strategies[strategy].max_positions;
+        let current_capacity = self.transactions.count_capacity(strategy);
+        if current_capacity >= max_positions as usize {
+            info!(
+                "Strategy[{}] has {} transactions, max capacity: {}",
+                strategy, current_capacity, max_positions
+            );
+            return Ok(());
+        }
         if let Some(transaction) = self.transactions.get_transaction(&mkt_signal.symbol) {
             info!(
                 "Already has an open transaction for strategy: {} symbol: {}",
@@ -241,7 +243,7 @@ impl Engine {
     }
 
     async fn handle_cancel(&mut self, symbol: &str, order_id: Uuid) {
-        info!("In handle new for symbol: {symbol}");
+        info!("In handle cancel for symbol: {symbol}");
         match self.order_handler.cancel_order(&order_id).await {
             Err(error) => {
                 error!("Dropping order cancel, failed to send to server, error={error}");
@@ -252,7 +254,7 @@ impl Engine {
     }
 
     async fn handle_liquidate(&self, symbol: &str) -> Option<Uuid> {
-        info!("In handle new for symbol: {symbol}");
+        info!("In handle liquidate for symbol: {symbol}");
         match self.order_handler.liquidate_position(symbol).await {
             Err(error) => {
                 error!("Dropping liquidate, failed to send to server, error={error}");
@@ -325,7 +327,7 @@ impl Engine {
 
             match order.action {
                 OrderAction::Create => {
-                    self.transactions.update_transaction(order_id).await?;
+                    self.transactions.confirm_transaction(order_id).await?;
                 }
                 OrderAction::Liquidate => {
                     self.mktdata.lock().await.unsubscribe(&symbol).await?;
