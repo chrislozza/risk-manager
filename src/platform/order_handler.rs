@@ -1,19 +1,15 @@
+use anyhow::bail;
 use anyhow::Ok;
-use apca::api::v2::{asset, order};
+use anyhow::Result;
+use apca::api::v2::asset;
+use apca::api::v2::order;
 use num_decimal::Num;
-
 use std::sync::Arc;
+use tracing::info;
 use uuid::Uuid;
 
-use tracing::info;
-
-use anyhow::bail;
-use anyhow::Result;
-
 use super::super::events::Side;
-
 use super::web_clients::Connectors;
-
 use crate::to_num;
 
 pub struct OrderHandler {
@@ -40,7 +36,10 @@ impl OrderHandler {
         let side = Self::convert_side(side);
         info!(
             "Placing order for fields limit_price: {}, stop_price: {}, amount: {:?}, side: {:?}",
-            limit_price, stop_price, position_size, side
+            limit_price,
+            stop_price,
+            position_size.to_i64(),
+            side
         );
 
         let request = order::OrderReqInit {

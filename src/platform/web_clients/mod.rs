@@ -1,3 +1,5 @@
+use anyhow::bail;
+use anyhow::Result;
 use apca::api::v2::account;
 use apca::api::v2::asset;
 use apca::api::v2::assets;
@@ -10,26 +12,19 @@ use apca::data::v2::bars;
 use apca::data::v2::stream;
 use apca::ApiInfo;
 use apca::Client;
-
-use anyhow::bail;
-use anyhow::Result;
-
 use std::sync::Arc;
+use tokio::sync::broadcast;
+use tokio_util::sync::CancellationToken;
+use tracing::info;
 use url::Url;
 use uuid::Uuid;
-
-use tokio::sync::broadcast;
-
-use tokio_util::sync::CancellationToken;
-
-use tracing::info;
 
 mod http_client;
 mod websocket;
 
-use super::web_clients::http_client::HttpClient;
-use super::web_clients::websocket::WebSocket;
 use super::Event;
+use http_client::HttpClient;
+use websocket::WebSocket;
 
 #[derive(Debug)]
 pub struct Connectors {
@@ -73,6 +68,7 @@ impl Connectors {
     }
 
     pub async fn get_assets(&self, request: &assets::AssetsReq) -> Result<Vec<asset::Asset>> {
+        info!("Request get_assets");
         match self
             .http_client
             .send_request::<assets::Get>(&self.client, request)
@@ -84,6 +80,7 @@ impl Connectors {
     }
 
     pub async fn get_account_details(&self) -> Result<account::Account> {
+        info!("Request get_account_details");
         match self
             .http_client
             .send_request::<account::Get>(&self.client, &())
@@ -96,6 +93,7 @@ impl Connectors {
 
     pub async fn get_order(&self, order_id: Uuid) -> Result<order::Order> {
         let _request = orders::OrdersReq::default();
+        info!("Request get_order");
         match self
             .http_client
             .send_request::<order::Get>(&self.client, &Id(order_id))
@@ -111,6 +109,7 @@ impl Connectors {
             status: orders::Status::All,
             ..Default::default()
         };
+        info!("Request get_orders");
         match self
             .http_client
             .send_request::<orders::Get>(&self.client, &request)
@@ -121,9 +120,13 @@ impl Connectors {
         }
     }
 
-    pub async fn get_position(&self, symbol: &str) -> Result<position::Position> {
-        let symbol_exchange: asset::Symbol =
-            asset::Symbol::SymExchg(symbol.to_string(), asset::Exchange::Amex);
+    pub async fn get_position(
+        &self,
+        symbol: &str,
+        exchange: asset::Exchange,
+    ) -> Result<position::Position> {
+        let symbol_exchange: asset::Symbol = asset::Symbol::SymExchg(symbol.to_string(), exchange);
+        info!("Request get_position");
         match self
             .http_client
             .send_request::<position::Get>(&self.client, &symbol_exchange)
@@ -135,6 +138,7 @@ impl Connectors {
     }
 
     pub async fn get_positions(&self) -> Result<Vec<position::Position>> {
+        info!("Request get_positions");
         match self
             .http_client
             .send_request::<positions::Get>(&self.client, &())
@@ -146,6 +150,7 @@ impl Connectors {
     }
 
     pub async fn place_order(&self, request: &order::OrderReq) -> Result<order::Order> {
+        info!("Request place_order");
         match self
             .http_client
             .send_request::<order::Post>(&self.client, request)
@@ -157,6 +162,7 @@ impl Connectors {
     }
 
     pub async fn cancel_order(&self, id: &order::Id) -> Result<()> {
+        info!("Request cancel_order");
         match self
             .http_client
             .send_request::<order::Delete>(&self.client, id)
@@ -168,6 +174,7 @@ impl Connectors {
     }
 
     pub async fn close_position(&self, symbol: &asset::Symbol) -> Result<order::Order> {
+        info!("Request close_position");
         match self
             .http_client
             .send_request::<position::Delete>(&self.client, symbol)
@@ -179,6 +186,7 @@ impl Connectors {
     }
 
     pub async fn get_historical_bars(&self, request: &bars::BarsReq) -> Result<bars::Bars> {
+        info!("Request get_historical_bars");
         match self
             .http_client
             .send_request::<bars::Get>(&self.client, request)
@@ -190,6 +198,7 @@ impl Connectors {
     }
 
     pub async fn subscribe_to_symbols(&self, symbols: stream::SymbolList) -> Result<()> {
+        info!("Request subscribe_to_symbols");
         match self.websocket.subscribe_to_mktdata(symbols).await {
             Err(err) => bail!("Call to subscribe_to_symbols failed, error={}", err),
             val => val,
@@ -197,6 +206,7 @@ impl Connectors {
     }
 
     pub async fn unsubscribe_from_symbols(&self, symbols: stream::SymbolList) -> Result<()> {
+        info!("Request unsubscribe_from_symbols");
         match self.websocket.unsubscribe_from_mktdata(symbols).await {
             Err(err) => bail!("Call to unsubscribe_from_symbols failed, error={}", err),
             anyhow::Result::Ok(val) => Ok(val),

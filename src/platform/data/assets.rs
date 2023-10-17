@@ -1,13 +1,11 @@
+use anyhow::Result;
 use apca::api::v2::asset::Asset;
 use apca::api::v2::asset::Class;
+use apca::api::v2::asset::Exchange;
 use apca::api::v2::asset::Status;
 use apca::api::v2::assets::AssetsReq;
-
-use std::sync::Arc;
-
 use std::collections::HashMap;
-
-use anyhow::Result;
+use std::sync::Arc;
 use tracing::info;
 use tracing::warn;
 
@@ -21,11 +19,11 @@ pub struct Assets {
 }
 
 impl Assets {
-    pub async fn new(connectors: &Arc<Connectors>) -> Result<Self> {
-        Ok(Assets {
+    pub async fn new(connectors: &Arc<Connectors>) -> Self {
+        Assets {
             connectors: Arc::clone(connectors),
             assets: HashMap::default(),
-        })
+        }
     }
 
     pub async fn fetch_asset_list(&self) -> HashMap<String, Asset> {
@@ -43,6 +41,10 @@ impl Assets {
     pub async fn startup(&mut self) -> Result<()> {
         self.assets = self.fetch_asset_list().await;
         Ok(())
+    }
+
+    pub fn get_exchange(&self, symbol: &str) -> Exchange {
+        self.assets[symbol].exchange
     }
 
     pub fn check_if_assest_is_tradable(&self, symbol: &str, direction: Direction) -> bool {

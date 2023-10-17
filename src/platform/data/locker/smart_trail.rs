@@ -7,7 +7,7 @@ use tracing::info;
 use crate::events::Direction;
 use crate::to_num;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct SmartTrail {
     pub current_price: Num,
     pub stop_price: Num,
@@ -71,7 +71,13 @@ impl SmartTrail {
         ]
     }
 
-    pub async fn price_update(&mut self, entry_price: Num, last_price: Num) -> Result<Num> {
+    pub async fn price_update(
+        &mut self,
+        strategy: &str,
+        symbol: &str,
+        entry_price: Num,
+        last_price: Num,
+    ) -> Result<Num> {
         self.current_price = last_price.clone();
         let price = last_price.to_f64().unwrap();
         let price_change = price - self.watermark.to_f64().unwrap();
@@ -134,7 +140,9 @@ impl SmartTrail {
             }
             if *zone > self.zone {
                 info!(
-                    "Zone update for stop: last price: {} new stop level: {} in zone: {}, direction: {}",
+                    "Zone update for stop: strategy[{}] symbol[{}] last price: [{}] new stop level: [{}] in zone: [{}], direction: [{}]",
+                    strategy,
+                    symbol,
                     last_price.clone().round_with(2),
                     self.stop_price.clone().round_with(2),
                     zone,

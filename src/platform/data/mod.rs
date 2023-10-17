@@ -27,20 +27,22 @@ mod locker;
 pub mod mktorder;
 pub mod mktposition;
 
-use super::data::db_client::DBClient;
-use super::data::locker::Locker;
-use super::data::locker::TransactionType;
-use super::data::mktorder::MktOrder;
-use super::data::mktorder::MktOrders;
-use super::data::mktorder::OrderAction;
-use super::data::mktposition::MktPosition;
-use super::data::mktposition::MktPositions;
 use super::mktdata::MktData;
 use super::mktdata::Snapshot;
 use super::web_clients::Connectors;
 use crate::events::Direction;
-use crate::platform::data::mktorder::OrderStatus;
+use crate::events::Side;
 use crate::to_num;
+use assets::Assets;
+use db_client::DBClient;
+use locker::Locker;
+use locker::TransactionType;
+use mktorder::MktOrder;
+use mktorder::MktOrders;
+use mktorder::OrderAction;
+use mktorder::OrderStatus;
+use mktposition::MktPosition;
+use mktposition::MktPositions;
 
 use crate::Settings;
 
@@ -65,7 +67,7 @@ impl FromStr for TransactionStatus {
     fn from_str(val: &str) -> Result<Self, Self::Err> {
         match val {
             "Waiting" => std::result::Result::Ok(TransactionStatus::Waiting),
-            "Active" => std::result::Result::Ok(TransactionStatus::Confirmed),
+            "Confirmed" => std::result::Result::Ok(TransactionStatus::Confirmed),
             "Cancelled" => std::result::Result::Ok(TransactionStatus::Cancelled),
             "Complete" => std::result::Result::Ok(TransactionStatus::Complete),
             _ => Err(format!(
@@ -158,24 +160,29 @@ impl Transaction {
         self.pnl.clone() / self.cost_basis.clone() * to_num!(100.00)
     }
 
-    fn update_from_position(&mut self, position: &MktPosition) {
+    async fn update_from_position(&mut self, position: &MktPosition, db: &Arc<DBClient>) {
         self.cost_basis = position.cost_basis.clone();
         self.pnl = position.pnl.clone();
         self.roi = self.calculate_roi();
-        if self.status == TransactionStatus::Waiting {
-            self.status = TransactionStatus::Confirmed;
-        }
+        let _ = self.persist_db(db.clone()).await;
     }
 
-    fn update_from_order(&mut self, order: &MktOrder) {
+    async fn update_from_order(&mut self, order: &MktOrder, db: &Arc<DBClient>) {
         match order.action {
             OrderAction::Create => {
-                self.entry_time = order.fill_time;
-                self.entry_price = order.fill_price.clone();
+                if order.status.eq(&OrderStatus::Filled) {
+                    self.entry_time = order.fill_time;
+                    self.entry_price = order.fill_price.clone();
+                    if self.status.eq(&TransactionStatus::Waiting) {
+                        self.status = TransactionStatus::Confirmed;
+                    }
+                }
             }
             OrderAction::Liquidate => {
-                self.exit_time = order.fill_time;
-                self.exit_price = order.fill_price.clone();
+                if order.status.eq(&OrderStatus::Filled) {
+                    self.exit_time = order.fill_time;
+                    self.exit_price = order.fill_price.clone();
+                }
             }
         };
         if !self
@@ -189,24 +196,18 @@ impl Transaction {
             );
             self.orders.push(order.local_id)
         }
+        let _ = self.persist_db(db.clone()).await;
     }
 
-    async fn transaction_complete(
-        &mut self,
-        order: &MktOrder,
-        mktposition: Option<MktPosition>,
-        status: TransactionStatus,
-        db: &Arc<DBClient>,
-    ) {
-        self.status = status;
-        if status == TransactionStatus::Complete {
-            self.exit_price = order.fill_price.clone();
-            self.exit_time = order.fill_time;
-            if let Some(position) = mktposition {
-                self.cost_basis = position.cost_basis;
-            }
-        }
-        let _ = self.persist_db(db.clone()).await;
+    async fn cancel(&mut self, order: &MktOrder, db: &Arc<DBClient>) {
+        self.status = TransactionStatus::Cancelled;
+        self.update_from_order(order, db).await;
+    }
+
+    async fn complete(&mut self, order: &MktOrder, position: &MktPosition, db: &Arc<DBClient>) {
+        self.status = TransactionStatus::Complete;
+        self.update_from_order(order, db).await;
+        self.update_from_position(position, db).await;
     }
 
     fn build_query<'a>(
@@ -291,6 +292,7 @@ pub struct Transactions {
     db: Arc<DBClient>,
     mktorders: MktOrders,
     mktpositions: MktPositions,
+    assets: Assets,
 }
 
 impl Transactions {
@@ -305,6 +307,7 @@ impl Transactions {
         let transactions = HashMap::new();
         let mktorders = MktOrders::new(connectors, &db);
         let mktpositions = MktPositions::new(connectors);
+        let assets = Assets::new(connectors).await;
 
         Ok(Transactions {
             transactions,
@@ -312,10 +315,12 @@ impl Transactions {
             db,
             mktorders,
             mktpositions,
+            assets,
         })
     }
 
     pub async fn startup(&mut self) -> Result<()> {
+        self.assets.startup().await?;
         let columns = vec!["status"];
 
         async fn fetch_with_status(
@@ -356,15 +361,30 @@ impl Transactions {
         for mut transaction in transactions {
             match transaction.status {
                 TransactionStatus::Waiting => {
-                    let _ = self.mktorders.load_from_db(transaction.orders[0]).await?;
+                    let mktorder = self.mktorders.load_from_db(transaction.orders[0]).await?;
+                    match mktorder.status {
+                        OrderStatus::Cancelled => {
+                            transaction.cancel(&mktorder, &self.db).await;
+                            continue;
+                        }
+                        OrderStatus::Filled => {
+                            transaction.update_from_order(&mktorder, &self.db).await;
+                            self.mktpositions.add_position(
+                                &transaction.strategy,
+                                &transaction.symbol,
+                                transaction.direction,
+                            )
+                        }
+                        _ => (),
+                    }
                     orders += 1;
                 }
                 TransactionStatus::Confirmed => {
-                    let mktposition = self
-                        .mktpositions
-                        .update_position(&transaction.symbol)
-                        .await?;
-                    transaction.update_from_position(&mktposition);
+                    self.mktpositions.add_position(
+                        &transaction.strategy,
+                        &transaction.symbol,
+                        transaction.direction,
+                    );
                     positions += 1;
                 }
                 _ => (),
@@ -392,7 +412,6 @@ impl Transactions {
     }
 
     pub async fn print_active_transactions(&mut self) -> Result<()> {
-        let _ = self.mktpositions.update_positions().await?;
         let _ = self.mktorders.update_orders().await?;
 
         info!("Printing transactions");
@@ -410,10 +429,15 @@ impl Transactions {
                     }
                 }
                 _ => {
-                    if let Some(position) = self.mktpositions.get_position(&transaction.symbol) {
+                    let symbol = transaction.symbol.as_str();
+                    if let anyhow::Result::Ok(position) = self
+                        .mktpositions
+                        .update_position(symbol, self.assets.get_exchange(symbol))
+                        .await
+                    {
                         let stop = self.locker.print_stop(&transaction.locker);
                         info!("{} {}", position, stop);
-                        transaction.update_from_position(position);
+                        transaction.update_from_position(&position, &self.db).await;
                         self.locker
                             .start_tracking_position(transaction.locker)
                             .await?;
@@ -437,10 +461,6 @@ impl Transactions {
 
     async fn update_order(&mut self, order_id: Uuid) -> Result<MktOrder> {
         self.mktorders.update_order(&order_id).await
-    }
-
-    async fn update_position(&mut self, symbol: &str) -> Result<MktPosition> {
-        self.mktpositions.update_position(symbol).await
     }
 
     pub async fn add_stop(
@@ -527,6 +547,10 @@ impl Transactions {
         Ok(())
     }
 
+    pub fn get_assets(&self) -> &Assets {
+        &self.assets
+    }
+
     pub fn get_transaction(&self, symbol: &str) -> Option<&Transaction> {
         self.transactions.get(symbol)
     }
@@ -534,13 +558,8 @@ impl Transactions {
     pub async fn confirm_transaction(&mut self, order_id: Uuid) -> Result<()> {
         let order = self.update_order(order_id).await?;
         let symbol = order.symbol.clone();
-        let mktposition = self.update_position(&symbol).await;
         if let Some(transaction) = self.transactions.get_mut(&symbol) {
-            transaction.update_from_order(&order);
-            if let anyhow::Result::Ok(position) = mktposition {
-                transaction.update_from_position(&position);
-            }
-            transaction.status = TransactionStatus::Confirmed;
+            transaction.update_from_order(&order, &self.db).await;
             info!(
                 "Strategy[{}] symbol[{}], position confirmed",
                 transaction.strategy, transaction.symbol
@@ -548,7 +567,11 @@ impl Transactions {
             self.locker
                 .start_tracking_position(transaction.locker)
                 .await?;
-            transaction.persist_db(self.db.clone()).await?
+            self.mktpositions.add_position(
+                &transaction.strategy,
+                &transaction.symbol,
+                transaction.direction,
+            );
         }
         Ok(())
     }
@@ -561,15 +584,11 @@ impl Transactions {
             assert!(orders
                 .iter()
                 .any(|order_local_id| order.local_id.eq(order_local_id)));
-            let position = self.mktpositions.update_position(symbol).await?;
-            transaction
-                .transaction_complete(
-                    &order,
-                    Some(position),
-                    TransactionStatus::Complete,
-                    &self.db,
-                )
-                .await
+            let position = self
+                .mktpositions
+                .update_position(symbol, self.assets.get_exchange(symbol))
+                .await?;
+            transaction.complete(&order, &position, &self.db).await
         } else {
             bail!(
                 "Unable to close transaction, not found for symbol: {}",
@@ -584,9 +603,7 @@ impl Transactions {
         let symbol = order.symbol.clone();
         info!("Transaction cancelled for symbol: {}", symbol);
         if let Some(transaction) = self.transactions.get_mut(&symbol) {
-            transaction
-                .transaction_complete(&order, None, TransactionStatus::Cancelled, &self.db)
-                .await;
+            transaction.cancel(&order, &self.db).await;
             self.locker.complete(transaction.locker).await;
         } else {
             bail!(
@@ -605,13 +622,21 @@ impl Transactions {
         &mut self,
         symbol: &str,
         order_id: Uuid,
+        side: Side,
         direction: Direction,
         action: OrderAction,
     ) -> Result<()> {
         if let Some(transaction) = self.transactions.get_mut(symbol) {
             let _ = self
                 .mktorders
-                .add_order(order_id, symbol, &transaction.strategy, direction, action)
+                .add_order(
+                    order_id,
+                    symbol,
+                    &transaction.strategy,
+                    side,
+                    direction,
+                    action,
+                )
                 .await?;
             transaction.orders.push(order_id);
             transaction.persist_db(self.db.clone()).await?;

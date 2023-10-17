@@ -1,19 +1,15 @@
+use anyhow::Result;
+use apca::api::v2::asset::Exchange;
 use apca::api::v2::position::Position;
 use num_decimal::Num;
+use std::collections::HashMap;
+use std::fmt;
+use std::sync::Arc;
 use uuid::Uuid;
 
-use std::collections::HashMap;
-
-use std::sync::Arc;
-
-use anyhow::bail;
-use anyhow::Result;
-use std::fmt;
-
+use super::super::web_clients::Connectors;
 use crate::events::Direction;
 use crate::to_num;
-
-use super::super::web_clients::Connectors;
 
 #[derive(Debug, Clone, Default)]
 pub struct MktPosition {
@@ -28,6 +24,15 @@ pub struct MktPosition {
 }
 
 impl MktPosition {
+    pub fn new(strategy: &str, symbol: &str, direction: Direction) -> Self {
+        MktPosition {
+            strategy: strategy.to_string(),
+            symbol: symbol.to_string(),
+            direction,
+            ..Default::default()
+        }
+    }
+
     pub fn update_inner(&mut self, position: Position) -> &Self {
         let entry_price = position.average_entry_price.clone();
         self.avg_price = match &position.current_price {
@@ -52,45 +57,50 @@ impl fmt::Display for MktPosition {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "Position symbol[{}], strategy[{}] avgPrice[{}], size[{}], pnl[{}]",
-            self.symbol, self.strategy, self.avg_price, self.quantity, self.pnl
+            "Position strategy[{}], symbol[{}] avgPrice[{}], size[{}], pnl[{}]",
+            self.strategy, self.symbol, self.avg_price, self.quantity, self.pnl
         )
     }
 }
 
 pub struct MktPositions {
     connectors: Arc<Connectors>,
-    mktpositions: HashMap<String, MktPosition>,
+    positions: HashMap<String, MktPosition>,
 }
 
 impl MktPositions {
     pub fn new(connectors: &Arc<Connectors>) -> Self {
         MktPositions {
             connectors: Arc::clone(connectors),
-            mktpositions: HashMap::default(),
+            positions: HashMap::default(),
         }
     }
 
-    pub fn get_position(&self, symbol: &str) -> Option<&MktPosition> {
-        self.mktpositions.get(symbol)
+    pub fn add_position(&mut self, strategy: &str, symbol: &str, direction: Direction) {
+        let position = MktPosition::new(strategy, symbol, direction);
+        self.positions.insert(symbol.to_string(), position);
     }
 
-    pub async fn update_position(&mut self, symbol: &str) -> Result<MktPosition> {
-        let position = self.connectors.get_position(symbol).await?;
-        if let Some(mktposition) = self.mktpositions.get_mut(symbol) {
+    pub async fn update_position(
+        &mut self,
+        symbol: &str,
+        exchange: Exchange,
+    ) -> Result<MktPosition> {
+        let position = self.connectors.get_position(symbol, exchange).await?;
+        if let Some(mktposition) = self.positions.get_mut(symbol) {
             Ok(mktposition.update_inner(position).clone())
         } else {
-            bail!("MktPosition key not found in HashMap")
+            panic!("MktPosition key not found in collection")
         }
     }
 
     pub async fn update_positions(&mut self) -> Result<Vec<MktPosition>> {
         let positions = self.connectors.get_positions().await?;
         for position in &positions {
-            if let Some(mktposition) = self.mktpositions.get_mut(&position.symbol) {
+            if let Some(mktposition) = self.positions.get_mut(&position.symbol) {
                 mktposition.update_inner(position.clone());
             }
         }
-        Ok(self.mktpositions.values().cloned().collect())
+        Ok(self.positions.values().cloned().collect())
     }
 }

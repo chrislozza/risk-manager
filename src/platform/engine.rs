@@ -18,7 +18,6 @@ use uuid::Uuid;
 
 use super::super::events::MktSignal;
 use super::data::account::AccountDetails;
-use super::data::assets::Assets;
 use super::data::mktorder::OrderAction;
 use super::data::TransactionStatus;
 use super::data::Transactions;
@@ -29,14 +28,13 @@ use super::web_clients::Connectors;
 use super::Event;
 use super::Settings;
 use crate::events::Direction;
-
+use crate::events::Side;
 use crate::settings::PositionSizing;
 use crate::to_num;
 
 pub struct Engine {
     settings: Settings,
     account: AccountDetails,
-    assets: Assets,
     mktdata: Arc<Mutex<MktData>>,
     order_handler: OrderHandler,
     transactions: Transactions,
@@ -53,14 +51,12 @@ impl Engine {
     ) -> Result<Arc<Mutex<Self>>> {
         let connectors = Connectors::new(key, secret, is_live, shutdown_signal)?;
         let account = AccountDetails::new(&connectors).await?;
-        let assets = Assets::new(&connectors).await?;
         let order_handler = OrderHandler::new(&connectors);
         let mktdata = MktData::new(&connectors);
         let transactions = Transactions::new(&settings, &connectors, &mktdata).await?;
         Ok(Arc::new(Mutex::new(Engine {
             settings,
             account,
-            assets,
             mktdata,
             order_handler,
             transactions,
@@ -71,7 +67,6 @@ impl Engine {
     pub async fn startup(&mut self) -> Result<()> {
         info!("Downloading orders and positions in engine startup");
         self.transactions.startup().await?;
-        self.assets.startup().await?;
         self.connectors.startup().await?;
         Ok(())
     }
@@ -95,7 +90,8 @@ impl Engine {
             return Ok(());
         }
         if !self
-            .assets
+            .transactions
+            .get_assets()
             .check_if_assest_is_tradable(&mkt_signal.symbol, mkt_signal.direction)
         {
             warn!(
@@ -116,6 +112,7 @@ impl Engine {
         .await?;
         let symbol = &mkt_signal.symbol;
         let strategy = &mkt_signal.strategy;
+        let side = mkt_signal.side;
         let direction = mkt_signal.direction;
         info!(
             "Stragegy[{}], Symbol[{}], create a waiting transaction",
@@ -140,7 +137,7 @@ impl Engine {
         {
             anyhow::Result::Ok(order_id) => {
                 self.transactions
-                    .add_order(symbol, order_id, direction, OrderAction::Create)
+                    .add_order(symbol, order_id, side, direction, OrderAction::Create)
                     .await?;
                 info!(
                     "Strategy[{}] symbol[{}] added a waiting order",
@@ -197,9 +194,13 @@ impl Engine {
         order_id: Uuid,
         direction: Direction,
     ) {
+        let side = match direction {
+            Direction::Long => Side::Sell,
+            Direction::Short => Side::Buy,
+        };
         if let Err(err) = self
             .transactions
-            .add_order(symbol, order_id, direction, OrderAction::Liquidate)
+            .add_order(symbol, order_id, side, direction, OrderAction::Liquidate)
             .await
         {
             warn!("Failed to add stop order, error={}", err);

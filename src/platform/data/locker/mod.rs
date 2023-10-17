@@ -13,7 +13,6 @@ use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use tracing::debug;
 use tracing::error;
 use tracing::info;
 use uuid::Uuid;
@@ -110,7 +109,7 @@ impl fmt::Display for StopType {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum Stop {
     Smart(SmartTrail),
     Atr(AtrStop),
@@ -140,6 +139,7 @@ impl Stop {
 
     async fn price_update(
         &mut self,
+        strategy: &str,
         symbol: &str,
         entry_price: Num,
         last_price: Num,
@@ -147,12 +147,16 @@ impl Stop {
     ) -> Result<Num> {
         match self {
             Stop::Atr(atr) => atr.price_update(symbol, last_price, mktdata).await,
-            Stop::Smart(trailing) => trailing.price_update(entry_price, last_price).await,
+            Stop::Smart(trailing) => {
+                trailing
+                    .price_update(strategy, symbol, entry_price, last_price)
+                    .await
+            }
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct SmartStop {
     pub local_id: Uuid,
     pub strategy: String,
@@ -421,9 +425,9 @@ impl Locker {
 
     pub async fn complete(&mut self, locker_id: Uuid) {
         if let Some(stop) = self.stops.get_mut(&locker_id) {
-            info!("Locker tracking symbol: {} marked as complete", stop.symbol);
             stop.status = LockerStatus::Finished;
             stop.persist_to_db(&self.db).await.unwrap();
+            info!("Locker tracking symbol: {} marked as complete", stop.symbol);
         }
     }
 
@@ -449,7 +453,6 @@ impl Locker {
         }
 
         async fn check_should_close(
-            symbol: &str,
             last_price: &Num,
             smart: &mut SmartStop,
             db: &Arc<DBClient>,
@@ -462,7 +465,8 @@ impl Locker {
             let stop_price = smart
                 .stop
                 .price_update(
-                    symbol,
+                    &smart.strategy,
+                    &smart.symbol,
                     smart.entry_price.clone(),
                     last_price.clone(),
                     mktdata,
@@ -487,9 +491,8 @@ impl Locker {
         }
 
         if let Some(smart) = self.stops.get_mut(locker_id) {
-            let symbol = smart.symbol.clone();
             if let anyhow::Result::Ok(stop_price) =
-                check_should_close(&symbol, last_price, smart, &self.db, &self.mktdata).await
+                check_should_close(last_price, smart, &self.db, &self.mktdata).await
             {
                 smart.status = LockerStatus::Disabled;
                 info!(

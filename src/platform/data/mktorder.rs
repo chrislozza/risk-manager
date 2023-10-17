@@ -15,11 +15,11 @@ use std::collections::HashMap;
 use std::fmt;
 use std::str::FromStr;
 use std::sync::Arc;
-use tracing::info;
 use uuid::Uuid;
 
 use super::db_client::DBClient;
 use crate::events::Direction;
+use crate::events::Side;
 use crate::platform::web_clients::Connectors;
 use crate::to_num;
 
@@ -82,6 +82,7 @@ pub struct MktOrder {
     pub local_id: Uuid,
     pub strategy: String,
     pub symbol: String,
+    pub side: Side,
     pub direction: Direction,
     pub action: OrderAction,
     pub entry_price: Num,
@@ -105,6 +106,7 @@ impl FromRow<'_, PgRow> for MktOrder {
             local_id: row.try_get("local_id")?,
             strategy: row.try_get("strategy")?,
             symbol: row.try_get("symbol")?,
+            side: Side::from_str(row.try_get("side")?).unwrap(),
             direction: Direction::from_str(row.try_get("direction")?).unwrap(),
             action: OrderAction::from_str(row.try_get("action")?).unwrap(),
             entry_price: sqlx_to_num(row, "entry_price")?,
@@ -123,6 +125,7 @@ impl MktOrder {
         action: OrderAction,
         strategy: &str,
         symbol: &str,
+        side: Side,
         direction: Direction,
         db: Option<&Arc<DBClient>>,
     ) -> Result<Self> {
@@ -130,6 +133,7 @@ impl MktOrder {
             local_id: Uuid::nil(),
             strategy: strategy.to_string(),
             symbol: symbol.to_string(),
+            side,
             direction,
             action,
             ..Default::default()
@@ -145,6 +149,7 @@ impl MktOrder {
             .bind(self.action.to_string())
             .bind(self.strategy.to_string())
             .bind(self.symbol.to_string())
+            .bind(self.side.to_string())
             .bind(self.direction.to_string())
             .bind(self.entry_price.round_with(3).to_f64())
             .bind(self.fill_price.round_with(3).to_f64())
@@ -160,6 +165,7 @@ impl MktOrder {
             "action",
             "strategy",
             "symbol",
+            "side",
             "direction",
             "entry_price",
             "fill_price",
@@ -221,7 +227,6 @@ impl MktOrder {
         };
 
         self.persist_db(db, None).await?;
-        info!("Updating mktorder {}", self);
         Ok(self)
     }
 }
@@ -282,6 +287,7 @@ impl MktOrders {
         order_id: Uuid,
         symbol: &str,
         strategy: &str,
+        side: Side,
         direction: Direction,
         action: OrderAction,
     ) -> Result<MktOrder> {
@@ -290,6 +296,7 @@ impl MktOrders {
             action,
             strategy,
             symbol,
+            side,
             direction,
             Some(&self.db),
         )

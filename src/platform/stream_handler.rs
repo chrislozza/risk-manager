@@ -1,19 +1,18 @@
+use anyhow::bail;
+use anyhow::Result;
 use apca::api::v2::updates;
 use apca::data::v2::stream;
 use apca::Client;
-
-use tracing::{error, info, warn};
-
-use anyhow::{bail, Result};
-use std::sync::Arc;
-use tokio::sync::broadcast;
-use tokio::sync::Mutex;
-
-use tokio_util::sync::CancellationToken;
-
 use futures::FutureExt as _;
 use futures::StreamExt as _;
 use futures::TryStreamExt as _;
+use std::sync::Arc;
+use tokio::sync::broadcast;
+use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
+use tracing::error;
+use tracing::info;
+use tracing::warn;
 
 use super::Event;
 

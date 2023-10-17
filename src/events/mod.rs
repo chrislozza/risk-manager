@@ -1,16 +1,13 @@
+use anyhow::Result;
 use serde::Deserialize;
 use serde::Deserializer;
 use std::fmt;
 use std::str::FromStr;
-use tracing::info;
-
 use std::sync::Arc;
 use tokio::sync::broadcast::Receiver;
-
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
-
-use anyhow::Result;
+use tracing::info;
 
 mod event_clients;
 mod pub_sub;
@@ -79,10 +76,29 @@ impl FromStr for Direction {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub enum Side {
+    #[default]
     Buy,
     Sell,
+}
+
+impl fmt::Display for Side {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl FromStr for Side {
+    type Err = String;
+
+    fn from_str(val: &str) -> Result<Self, Self::Err> {
+        match val {
+            "Buy" => Ok(Side::Buy),
+            "Sell" => Ok(Side::Sell),
+            _ => Err(format!("Failed to parse direction, unknown: {}", val)),
+        }
+    }
 }
 
 impl<'de> serde::Deserialize<'de> for Side {
@@ -145,8 +161,8 @@ impl EventPublisher {
         })
     }
 
-    pub async fn startup(&self) -> Result<Receiver<Event>> {
-        self.event_clients.lock().await.startup().await
+    pub async fn startup(&self) -> Receiver<Event> {
+        self.event_clients.lock().await.subscribe_to_events()
     }
 
     pub async fn run(&mut self) -> Result<()> {

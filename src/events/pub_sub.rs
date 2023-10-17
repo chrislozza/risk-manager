@@ -1,16 +1,12 @@
+use anyhow::Result;
 use google_cloud_default::WithAuthExt;
-
 use google_cloud_pubsub::client::Client;
 use google_cloud_pubsub::client::ClientConfig;
-
-use tracing::info;
-use tracing::warn;
-
+use std::collections::HashMap;
 use tokio::sync::broadcast::Sender;
 use tokio_util::sync::CancellationToken;
-
-use anyhow::Result;
-use std::collections::HashMap;
+use tracing::info;
+use tracing::warn;
 
 use super::Event;
 use super::MktSignal;
@@ -33,7 +29,7 @@ impl GcpPubSub {
         })
     }
 
-    pub async fn run(&self, event_publisher: Sender<Event>) -> Result<()> {
+    pub async fn run(&self, event_publisher: Sender<Event>) {
         info!("PubSub subscribing to {}", &self.subscription_name);
         let subscriber = self.client.subscription(&self.subscription_name);
         //subscribe
@@ -67,6 +63,5 @@ impl GcpPubSub {
                 )
                 .await;
         });
-        Ok(())
     }
 }

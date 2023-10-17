@@ -1,24 +1,19 @@
+use anyhow::bail;
 use anyhow::Ok;
+use anyhow::Result;
 use apca::api::v2::updates;
 use apca::data::v2::stream;
 use apca::data::v2::stream::MarketData;
 use apca::Client;
+use futures::FutureExt as _;
+use futures::StreamExt as _;
+use tokio::sync::broadcast;
 use tokio::sync::broadcast::error::RecvError;
-
+use tokio_util::sync::CancellationToken;
 use tracing::debug;
 use tracing::error;
 use tracing::info;
 use tracing::warn;
-
-use anyhow::bail;
-use anyhow::Result;
-
-use tokio::sync::broadcast;
-
-use tokio_util::sync::CancellationToken;
-
-use futures::FutureExt as _;
-use futures::StreamExt as _;
 
 use super::Event;
 
@@ -134,12 +129,19 @@ impl WebSocket {
                             }
                         }
                     },
-                    data = stream.next() => {
+                    payload = stream.next() => {
                         let publisher = event_publisher.clone();
                         let shutdown = shutdown_signal.clone();
                         tokio::spawn(async move {
-                            if let Some(payload) = data {
-                                let data = match payload.unwrap() {
+                            if let Some(data) = payload {
+                                let data = match data {
+                                    std::result::Result::Ok(val) => val,
+                                    Err(err) => {
+                                        shutdown.cancel();
+                                        return warn!("Failed to parse data, error={}", err);
+                                    }
+                                };
+                                let data = match data {
                                     std::result::Result::Ok(val) => val,
                                     Err(err) => {
                                         shutdown.cancel();

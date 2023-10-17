@@ -1,15 +1,11 @@
-use apca::Client;
-
-use std::thread;
-use std::time::Duration;
-
 use anyhow::bail;
 use anyhow::Result;
+use apca::Client;
 use http_endpoint::Endpoint;
-
-use tracing::warn;
-
+use std::thread;
+use std::time::Duration;
 use tokio_util::sync::CancellationToken;
+use tracing::warn;
 
 #[derive(Debug)]
 pub(crate) struct HttpClient {

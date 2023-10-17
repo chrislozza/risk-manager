@@ -5,6 +5,7 @@ use ta::indicators::AverageTrueRange;
 use ta::DataItem;
 use ta::Next;
 use tokio::sync::Mutex;
+use tracing::info;
 
 use super::mktdata::MktData;
 use crate::to_num;
@@ -29,6 +30,8 @@ impl TechnnicalSignals {
                 atr = indicator.next(&data_item);
             }
         }
-        Ok(to_num!(atr))
+        let atr = to_num!(atr);
+        info!("Symbol [{}] todays atr: {}", symbol, atr);
+        Ok(atr)
     }
 }

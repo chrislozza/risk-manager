@@ -1,13 +1,10 @@
+use super::super::web_clients::Connectors;
+use anyhow::Result;
 use apca::api::v2::account;
 use num_decimal::Num;
 use std::fmt;
 use std::sync::Arc;
-
 use tracing::info;
-
-use anyhow::Result;
-
-use super::super::web_clients::Connectors;
 
 #[derive(Debug)]
 pub struct AccountDetails {

@@ -102,13 +102,7 @@ async fn main() {
             std::process::exit(1);
         }
     };
-    let mut publisher_events = match publisher.startup().await {
-        Ok(event_handler) => event_handler,
-        _ => {
-            error!("Publisher failed in startup, exiting app...");
-            std::process::exit(1);
-        }
-    };
+    let mut publisher_events = publisher.startup().await;
     let mut is_graceful_shutdown = false;
     let _ = platform.run().await;
     let _ = publisher.run().await;

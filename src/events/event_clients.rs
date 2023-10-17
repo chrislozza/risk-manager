@@ -1,11 +1,10 @@
+use anyhow::Result;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::Receiver;
 use tokio::sync::broadcast::Sender;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
-
-use anyhow::Result;
 
 use super::pub_sub::GcpPubSub;
 use super::web_hook::WebHook;
@@ -33,16 +32,12 @@ impl EventClients {
         })))
     }
 
-    pub async fn startup(&self) -> Result<Receiver<Event>> {
-        Ok(self.subscribe_to_events())
-    }
-
     pub fn subscribe_to_events(&self) -> Receiver<Event> {
         self.publisher.subscribe()
     }
 
     pub async fn run(&mut self) -> Result<()> {
-        let _ = self.pubsub.run(self.publisher.clone()).await;
+        self.pubsub.run(self.publisher.clone()).await;
         self.webhook.run(self.publisher.clone()).await
     }
 }
