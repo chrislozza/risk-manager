@@ -261,7 +261,15 @@ impl MktOrders {
         }
     }
 
-    pub async fn load_from_db(&mut self, order_id: Uuid) -> Result<MktOrder> {
+    pub async fn load_from_db(&mut self, order_ids: &[Uuid]) -> Result<Vec<MktOrder>> {
+        let mut orders = Vec::default();
+        for order_id in order_ids {
+            orders.push(self.load_by_id_from_db(*order_id).await?);
+        }
+        Ok(orders)
+    }
+
+    pub async fn load_by_id_from_db(&mut self, order_id: Uuid) -> Result<MktOrder> {
         let columns = vec!["local_id"];
         let stmt = self
             .db

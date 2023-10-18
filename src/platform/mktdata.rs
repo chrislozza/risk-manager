@@ -14,6 +14,8 @@ use tracing::debug;
 use tracing::info;
 use tracing::warn;
 
+use crate::to_num;
+
 #[derive(Default, Debug, Clone)]
 pub struct Snapshot {
     pub mid_price: Num,
@@ -99,7 +101,9 @@ impl MktData {
         info!("Unsubscribing from market data for symbol: {}", symbol);
         self.connectors
             .unsubscribe_from_symbols(vec![symbol.to_string()].into())
-            .await
+            .await?;
+        self.snapshots.remove(symbol);
+        Ok(())
     }
 
     pub fn get_snapshots(&mut self) -> HashMap<String, Snapshot> {
@@ -119,6 +123,11 @@ impl MktData {
         let bid = &mktdata_update.ask_price;
         let ask = &mktdata_update.bid_price;
         let mid = (ask - bid) / 2 + bid;
+
+        if mid == to_num!(0.0) {
+            warn!("Mid price calculated as 0");
+            return;
+        }
 
         debug!(
             "Capture market data for symbol: {}, bid[{}], ask[{}], mid[{}]",

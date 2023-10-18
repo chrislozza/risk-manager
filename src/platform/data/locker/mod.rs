@@ -116,17 +116,17 @@ enum Stop {
 }
 
 impl Stop {
-    fn stop_price(&self) -> Num {
+    fn stop_price(&self) -> Option<Num> {
         match self {
             Stop::Atr(atr) => atr.stop_price.clone(),
             Stop::Smart(trailing) => trailing.stop_price.clone(),
         }
     }
 
-    fn watermark(&self) -> Num {
+    fn watermark(&self) -> Option<Num> {
         match self {
             Stop::Atr(atr) => atr.stop_price.clone(),
-            Stop::Smart(trailing) => trailing.watermark.clone(),
+            Stop::Smart(trailing) => Some(trailing.watermark.clone()),
         }
     }
 
@@ -143,10 +143,9 @@ impl Stop {
         symbol: &str,
         entry_price: Num,
         last_price: Num,
-        mktdata: &Arc<Mutex<MktData>>,
-    ) -> Result<Num> {
+    ) -> Option<Num> {
         match self {
-            Stop::Atr(atr) => atr.price_update(symbol, last_price, mktdata).await,
+            Stop::Atr(atr) => atr.price_update(symbol, last_price).await,
             Stop::Smart(trailing) => {
                 trailing
                     .price_update(strategy, symbol, entry_price, last_price)
@@ -203,7 +202,11 @@ impl FromRow<'_, PgRow> for SmartStop {
 
         let stop = match stop_type {
             StopType::Atr => Stop::Atr(AtrStop::new(
-                watermark, multiplier, direction, zone, stop_price,
+                watermark,
+                multiplier,
+                direction,
+                zone,
+                Some(stop_price),
             )),
             StopType::Percent => Stop::Smart(SmartTrail::new(
                 entry_price.clone(),
@@ -211,7 +214,7 @@ impl FromRow<'_, PgRow> for SmartStop {
                 multiplier,
                 direction,
                 zone,
-                stop_price,
+                Some(stop_price),
             )),
         };
 
@@ -238,7 +241,7 @@ impl SmartStop {
         entry_price: Num,
         multiplier: f64,
         stop_type: StopType,
-        db: &Arc<DBClient>,
+        mktdata: &Arc<Mutex<MktData>>,
     ) -> Self {
         let stop = match stop_type {
             StopType::Percent => Stop::Smart(SmartTrail::new(
@@ -247,17 +250,15 @@ impl SmartStop {
                 multiplier,
                 direction,
                 0,
-                to_num!(0.0),
+                None,
             )),
-            StopType::Atr => Stop::Atr(AtrStop::new(
-                entry_price.clone(),
-                multiplier,
-                direction,
-                0,
-                to_num!(0.0),
-            )),
+            StopType::Atr => {
+                let mut stop = AtrStop::new(entry_price.clone(), multiplier, direction, 0, None);
+                let _ = stop.update_daily_atr(symbol, mktdata).await;
+                Stop::Atr(stop)
+            }
         };
-        let mut stop = SmartStop {
+        SmartStop {
             local_id: Uuid::nil(),
             strategy: strategy.to_string(),
             symbol: symbol.to_string(),
@@ -268,11 +269,7 @@ impl SmartStop {
             transact_type: TransactionType::Order,
             status: LockerStatus::Active,
             stop,
-        };
-        if let Err(err) = stop.persist_to_db(db).await {
-            error!("Failed to persist stop to db, error={}", err);
         }
-        stop
     }
 
     fn build_query<'a>(&'a self, stmt: &'a str, stop: &Stop) -> Query<'_, Postgres, PgArguments> {
@@ -280,11 +277,11 @@ impl SmartStop {
             .bind(self.strategy.clone())
             .bind(self.symbol.clone())
             .bind(self.entry_price.round_with(3).to_f64().unwrap())
-            .bind(stop.stop_price().round_with(3).to_f64().unwrap())
+            .bind(stop.stop_price().unwrap().round_with(3).to_f64().unwrap())
             .bind(self.stop_type.to_string())
             .bind(self.multiplier)
             .bind(self.direction.to_string())
-            .bind(stop.watermark().round_with(3).to_f64().unwrap())
+            .bind(stop.watermark().unwrap().round_with(3).to_f64().unwrap())
             .bind(stop.zone())
             .bind(self.status.to_string())
             .bind(self.transact_type.to_string())
@@ -390,16 +387,20 @@ impl Locker {
         let strategy_cfg = &self.settings.strategies[strategy];
         let stop_cfg = &self.settings.stops[&strategy_cfg.locker];
         let stop_type = StopType::from_str(&stop_cfg.locker_type).unwrap();
-        let stop = SmartStop::new(
+        let mut stop = SmartStop::new(
             symbol,
             strategy,
             direction,
             entry_price.clone(),
             stop_cfg.multiplier,
             stop_type,
-            &self.db,
+            &self.mktdata,
         )
         .await;
+
+        if let Err(err) = stop.persist_to_db(&self.db).await {
+            error!("Failed to persist stop to db, error={}", err);
+        }
 
         info!(
             "Strategy[{}] locker monitoring new symbol: {} entry price: {} transaction: {:?}",
@@ -456,24 +457,30 @@ impl Locker {
             last_price: &Num,
             smart: &mut SmartStop,
             db: &Arc<DBClient>,
-            mktdata: &Arc<Mutex<MktData>>,
         ) -> Result<Num> {
             if smart.status.ne(&LockerStatus::Active) {
                 bail!("Not active");
             }
-            let current_stop = smart.stop.stop_price();
-            let stop_price = smart
+            let current_stop = match smart.stop.stop_price() {
+                Some(price) => price,
+                _ => bail!("Current stop price not yet calculated"),
+            };
+            let stop_price = match smart
                 .stop
                 .price_update(
                     &smart.strategy,
                     &smart.symbol,
                     smart.entry_price.clone(),
                     last_price.clone(),
-                    mktdata,
                 )
-                .await?;
+                .await
+            {
+                Some(price) => price,
+                _ => bail!("New stop price not yet calculated"),
+            };
 
             if smart.status == LockerStatus::Disabled {
+                info!("Locker status has been set to disabled");
                 return Ok(stop_price);
             }
             if current_stop != stop_price && smart.transact_type == TransactionType::Position {
@@ -487,12 +494,13 @@ impl Locker {
             if !result {
                 bail!("Don't close")
             }
+            info!("Last price: {} stop: {}", last_price, stop_price);
             Ok(stop_price)
         }
 
         if let Some(smart) = self.stops.get_mut(locker_id) {
             if let anyhow::Result::Ok(stop_price) =
-                check_should_close(last_price, smart, &self.db, &self.mktdata).await
+                check_should_close(last_price, smart, &self.db).await
             {
                 smart.status = LockerStatus::Disabled;
                 info!(
