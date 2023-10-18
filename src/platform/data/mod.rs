@@ -361,14 +361,17 @@ impl Transactions {
         for mut transaction in transactions {
             match transaction.status {
                 TransactionStatus::Waiting => {
-                    let mktorder = self.mktorders.load_from_db(transaction.orders[0]).await?;
+                    let mktorder = &self
+                        .mktorders
+                        .load_from_db(&[transaction.orders[0]])
+                        .await?[0];
                     match mktorder.status {
                         OrderStatus::Cancelled => {
-                            transaction.cancel(&mktorder, &self.db).await;
+                            transaction.cancel(mktorder, &self.db).await;
                             continue;
                         }
                         OrderStatus::Filled => {
-                            transaction.update_from_order(&mktorder, &self.db).await;
+                            transaction.update_from_order(mktorder, &self.db).await;
                             self.mktpositions.add_position(
                                 &transaction.strategy,
                                 &transaction.symbol,
@@ -380,11 +383,34 @@ impl Transactions {
                     orders += 1;
                 }
                 TransactionStatus::Confirmed => {
+                    let symbol = &transaction.symbol;
                     self.mktpositions.add_position(
                         &transaction.strategy,
-                        &transaction.symbol,
+                        symbol,
                         transaction.direction,
                     );
+                    let order_ids = &transaction.orders[1..];
+                    let orders = self.mktorders.load_from_db(order_ids).await?;
+                    let position = self
+                        .mktpositions
+                        .update_position(symbol, self.assets.get_exchange(symbol))
+                        .await?;
+                    let filled_quantity: i64 = orders
+                        .iter()
+                        .map(|order| {
+                            if order.status.eq(&OrderStatus::Filled) {
+                                order.quantity.to_i64().unwrap()
+                            } else {
+                                0_i64
+                            }
+                        })
+                        .sum();
+                    if transaction.quantity == Num::from(filled_quantity) {
+                        transaction
+                            .complete(orders.last().unwrap(), &position, &self.db)
+                            .await;
+                        continue;
+                    }
                     positions += 1;
                 }
                 _ => (),
