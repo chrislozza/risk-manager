@@ -9,7 +9,7 @@ use crate::to_num;
 #[derive(Debug, Clone)]
 pub struct SmartTrail {
     pub current_price: Num,
-    pub stop_price: Option<Num>,
+    pub stop_price: Num,
     pub pivot_points: [(i16, f64, f64); 4],
     pub watermark: Num,
     pub zone: i16,
@@ -19,43 +19,47 @@ pub struct SmartTrail {
 
 impl fmt::Display for SmartTrail {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if let Some(stop_price) = &self.stop_price {
-            write!(
-                f,
-                "price[{}], stop[{}], zone[{}]",
-                self.current_price.round_with(3).to_f64().unwrap(),
-                stop_price.round_with(2).to_f64().unwrap(),
-                self.zone,
-            )
-        } else {
-            write!(f, "zone[{}]", self.zone)
-        }
+        write!(
+            f,
+            "price[{}], stop[{}], zone[{}]",
+            self.current_price.round_with(3).to_f64().unwrap(),
+            self.stop_price.round_with(2).to_f64().unwrap(),
+            self.zone,
+        )
     }
 }
 
 impl SmartTrail {
-    pub fn new(
-        entry_price: Num,
+    pub fn new(symbol: &str, entry_price: Num, multiplier: f64, direction: Direction) -> Self {
+        let pivot_points = Self::calculate_pivot_points(multiplier);
+        let stop_price = match direction {
+            Direction::Long => entry_price.clone() * to_num!(1.0 - pivot_points[0].1),
+            Direction::Short => entry_price.clone() * to_num!(1.0 + pivot_points[0].1),
+        };
+        info!("For {}, adding new stop_price: {}", symbol, stop_price);
+        SmartTrail {
+            current_price: stop_price.clone(),
+            pivot_points,
+            stop_price: stop_price.clone(),
+            watermark: stop_price.clone(),
+            zone: 0,
+            multiplier,
+            direction,
+        }
+    }
+
+    pub fn from_db(
         watermark: Num,
         multiplier: f64,
         direction: Direction,
         zone: i16,
-        stop_price: Option<Num>,
+        stop_price: Num,
     ) -> Self {
         let pivot_points = Self::calculate_pivot_points(multiplier);
-
-        let stop_price = match stop_price {
-            Some(price) => price,
-            None => match direction {
-                Direction::Long => entry_price.clone() * to_num!(1.0 - pivot_points[0].1),
-                Direction::Short => entry_price.clone() * to_num!(1.0 + pivot_points[0].1),
-            },
-        };
-        let current_price = stop_price.clone();
         SmartTrail {
-            current_price,
+            current_price: stop_price.clone(),
             pivot_points,
-            stop_price: Some(stop_price),
+            stop_price,
             watermark,
             zone,
             multiplier,
@@ -82,7 +86,7 @@ impl SmartTrail {
         symbol: &str,
         entry_price: Num,
         last_price: Num,
-    ) -> Option<Num> {
+    ) -> Num {
         self.current_price = last_price.clone();
         let price = last_price.to_f64().unwrap();
         let price_change = price - self.watermark.to_f64().unwrap();
@@ -90,10 +94,7 @@ impl SmartTrail {
             return self.stop_price.clone();
         }
         let entry_price = entry_price.to_f64().unwrap();
-        let mut stop_loss_level = match &mut self.stop_price {
-            Some(price) => price.to_f64().unwrap(),
-            None => panic!("Failed to extract stop price"),
-        };
+        let mut stop_loss_level = self.stop_price.to_f64().unwrap();
         for (zone, percentage_change, new_trail_factor) in self.pivot_points.iter() {
             match self.direction {
                 Direction::Long => {
@@ -141,7 +142,7 @@ impl SmartTrail {
                         entry_price,
                         percentage_change,
                         stop_loss_level,
-                        self.stop_price.as_ref().unwrap(),
+                        self.stop_price,
                         price_change
                     );
                 }
@@ -163,8 +164,8 @@ impl SmartTrail {
         }
 
         let stop_loss_level = to_num!(stop_loss_level);
-        self.stop_price = Some(stop_loss_level.clone());
+        self.stop_price = stop_loss_level.clone();
         self.watermark = last_price;
-        Some(stop_loss_level)
+        stop_loss_level
     }
 }

@@ -7,27 +7,48 @@ use chrono::Duration;
 use chrono::Utc;
 use num_decimal::Num;
 use std::collections::HashMap;
+use std::fmt;
 use std::sync::Arc;
 use std::vec::Vec;
 use tokio::sync::Mutex;
-use tracing::debug;
 use tracing::info;
 use tracing::warn;
 
-use crate::to_num;
-
 #[derive(Default, Debug, Clone)]
 pub struct Snapshot {
+    pub bid_price: Num,
+    pub sell_price: Num,
     pub mid_price: Num,
     pub last_seen: DateTime<Utc>,
 }
 
+impl fmt::Display for Snapshot {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "bid[{}], ask[{}], mid[{}]",
+            self.bid_price.round_with(2),
+            self.sell_price.round_with(2),
+            self.mid_price.round_with(2),
+        )
+    }
+}
+
 impl Snapshot {
-    pub fn new(last_price: Num) -> Self {
+    pub fn new(bid: Num, ask: Num) -> Self {
+        let mid = (ask.clone() - bid.clone()) / 2 + bid.clone();
         Snapshot {
-            mid_price: last_price,
+            bid_price: bid,
+            sell_price: ask,
+            mid_price: mid,
             last_seen: Utc::now(),
         }
+    }
+
+    pub fn update(&mut self, bid: Num, ask: Num) {
+        let last_seen = self.last_seen;
+        *self = Self::new(bid, ask);
+        self.last_seen = last_seen;
     }
 
     pub fn is_periodic_check(&mut self) -> bool {
@@ -122,22 +143,13 @@ impl MktData {
         let symbol = &mktdata_update.symbol;
         let bid = &mktdata_update.ask_price;
         let ask = &mktdata_update.bid_price;
-        let mid = (ask - bid) / 2 + bid;
-
-        if mid == to_num!(0.0) {
-            warn!("Mid price calculated as 0");
-            return;
-        }
-
-        debug!(
-            "Capture market data for symbol: {}, bid[{}], ask[{}], mid[{}]",
-            symbol, bid, ask, mid
-        );
         if let Some(wrapped_snapshot) = &mut self.snapshots.get_mut(symbol) {
             match wrapped_snapshot {
-                Some(snapshot) => snapshot.mid_price = mid,
+                Some(snapshot) => {
+                    snapshot.update(bid.clone(), ask.clone());
+                }
                 None => {
-                    let snapshot = Snapshot::new(mid);
+                    let snapshot = Snapshot::new(bid.clone(), ask.clone());
                     self.snapshots.insert(symbol.clone(), Some(snapshot));
                 }
             }

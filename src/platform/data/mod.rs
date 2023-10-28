@@ -698,7 +698,7 @@ impl Transactions {
             if let Some(snapshot) = snapshots.get(symbol) {
                 if self
                     .locker
-                    .should_close(&transaction.locker, &snapshot.mid_price)
+                    .should_close(&transaction.locker, snapshot)
                     .await
                 {
                     to_close.push(transaction.clone());
