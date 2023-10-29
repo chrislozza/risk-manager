@@ -14,6 +14,7 @@ pub struct Settings {
     pub gcp_log_name: Option<String>,
     pub log_level: String,
     pub account_type: String,
+    pub launch_process: Option<ProcessLaunchSettings>,
     pub database: DatabaseConfig,
     pub sizing: PositionSizing,
     pub strategies: HashMap<String, StrategyConfig>,
@@ -27,7 +28,12 @@ pub struct DatabaseConfig {
     pub host: String,
     pub user: String,
     pub password: Option<String>,
-    pub enable_gcp: bool,
+}
+
+#[derive(Default, Clone, Debug, Deserialize)]
+pub struct ProcessLaunchSettings {
+    pub name: String,
+    pub args: Vec<String>,
 }
 
 #[derive(Default, Clone, Debug, Deserialize)]

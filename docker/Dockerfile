@@ -21,5 +21,5 @@ ENV API_SECRET $secret
 ENV DB_PASSWORD $dbpass
 ENV GOOGLE_APPLICATION_CREDENTIALS="/root/.ssh/service-client.json"
 
-#CMD [ "sleep", "infinity" ]
+# CMD [ "sleep", "infinity" ]
 CMD ["root/trading-app", "--settings", "/root/settings.json"]

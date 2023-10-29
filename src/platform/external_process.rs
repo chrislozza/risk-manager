@@ -1,4 +1,3 @@
-use anyhow::bail;
 use anyhow::Result;
 use nix::unistd::fork;
 use nix::unistd::ForkResult;
@@ -9,69 +8,71 @@ use std::process::Stdio;
 use tracing::error;
 use tracing::info;
 
+use crate::settings::ProcessLaunchSettings;
+
 pub struct ExternalProcess {}
 
 impl ExternalProcess {
-    pub fn launch_cloud_proxy(&self) -> Result<()> {
-        info!("Chris in here");
-        let process_name = "cloud-sql-proxy";
-        let args = vec![
-            "savvy-nimbus-306111:europe-west2:vibgo-sql",
-            "-p=5433",
-            "-c=/root/.ssh/service-client.json",
-        ];
-        match self.launch_process(process_name, args) {
+    pub fn launch_cloud_proxy(settings: &ProcessLaunchSettings) -> Result<Self> {
+        match ExternalProcess::launch_process(&settings.name, settings.args.clone()) {
             io::Result::Err(err) => {
-                bail!("{}", err)
+                panic!("{}", err)
             }
-            _ => Ok(()),
+            _ => {
+                info!("Starting {} success", settings.name);
+                Ok(ExternalProcess {})
+            }
         }
     }
 
-    fn launch_process(&self, process_name: &str, args: Vec<&str>) -> io::Result<()> {
-        match unsafe { fork() } {
-            Ok(ForkResult::Parent { child, .. }) => {
-                // This is the parent process
-                info!("Parent process (PID: {})", nix::unistd::getpid());
+    fn launch_process(process_name: &str, args: Vec<String>) -> io::Result<()> {
+        let process_name = process_name.to_string();
+        info!("Launching process: {}, with args: {:?}", process_name, args);
+        tokio::spawn(async move {
+            match unsafe { fork() } {
+                Ok(ForkResult::Parent { child, .. }) => {
+                    // This is the parent process
+                    info!("Parent process (PID: {})", nix::unistd::getpid());
 
-                // Wait for the child process to finish
-                let status = nix::sys::wait::waitpid(child, None)?;
-                info!("Child process (PID: {}) exited with: {:?}", child, status);
+                    // Wait for the child process to finish
+                    let status = nix::sys::wait::waitpid(child, None)?;
+                    info!("Child process (PID: {}) exited with: {:?}", child, status);
+                    Ok::<(), anyhow::Error>(())
+                }
+                Ok(ForkResult::Child) => {
+                    // This is the child process
+                    println!("Child process (PID: {})", nix::unistd::getpid());
+
+                    let mut child_process = Command::new(process_name)
+                        .args(args)
+                        .stderr(Stdio::piped())
+                        .stdout(Stdio::piped())
+                        .spawn()?;
+
+                    // Create reader instances for stdout and stderr of the child process
+                    let stdout = child_process
+                        .stdout
+                        .take()
+                        .expect("Failed to capture stdout");
+                    let stderr = child_process
+                        .stderr
+                        .take()
+                        .expect("Failed to capture stderr");
+
+                    // Spawn Tokio tasks to read and print stdout and stderr concurrently
+                    tokio::spawn(Self::read_and_print_stream("stdout", stdout));
+                    tokio::spawn(Self::read_and_print_stream("stderr", stderr));
+
+                    // Wait for the child process to finish
+                    let status = child_process.wait()?;
+                    println!("Child process exited with: {:?}", status);
+
+                    // Exit the child process
+                    std::process::exit(0);
+                }
+                Err(_) => panic!("Fork failed"),
             }
-            Ok(ForkResult::Child) => {
-                // This is the child process
-                println!("Child process (PID: {})", nix::unistd::getpid());
-
-                let mut child_process = Command::new(process_name)
-                    .args(args)
-                    .stdout(Stdio::piped())
-                    .stdout(Stdio::piped())
-                    .spawn()?;
-
-                // Create reader instances for stdout and stderr of the child process
-                let stdout = child_process
-                    .stdout
-                    .take()
-                    .expect("Failed to capture stdout");
-                let stderr = child_process
-                    .stderr
-                    .take()
-                    .expect("Failed to capture stderr");
-
-                // Spawn Tokio tasks to read and print stdout and stderr concurrently
-                tokio::spawn(Self::read_and_print_stream("stdout", stdout));
-                tokio::spawn(Self::read_and_print_stream("stderr", stderr));
-
-                // Wait for the child process to finish
-                let status = child_process.wait()?;
-                println!("Child process exited with: {:?}", status);
-
-                // Exit the child process
-                std::process::exit(0);
-            }
-            Err(_) => eprintln!("Fork failed"),
-        }
-
+        });
         Ok(())
     }
 

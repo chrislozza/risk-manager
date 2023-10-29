@@ -91,12 +91,21 @@ impl DBClient {
             "postgresql://{}:{}@{}:{}/{}?sslmode=disable",
             db_cfg.user, dbpass, db_cfg.host, db_cfg.port, db_cfg.name
         );
-        let pool = PgPoolOptions::new()
+        let pool = match PgPoolOptions::new()
             .min_connections(2)
             .max_connections(5)
             .test_before_acquire(false)
             .connect(&database_url)
-            .await?;
+            .await
+        {
+            std::result::Result::Ok(pool) => pool,
+            std::result::Result::Err(err) => {
+                panic!(
+                    "Failed to startup db connection pool with url: {} error={}",
+                    database_url, err
+                );
+            }
+        };
 
         Ok(Arc::new(DBClient {
             pool,
@@ -267,7 +276,6 @@ mod tests {
             host: "0.0.0.0".to_string(),
             user: "test".to_string(),
             password: Some("test".to_string()),
-            enable_gcp: false,
         };
         let settings = Settings {
             database: db_config,
