@@ -204,6 +204,11 @@ impl Transaction {
         self.update_from_order(order, db).await;
     }
 
+    async fn zombie(&mut self, db: &Arc<DBClient>) {
+        self.status = TransactionStatus::Cancelled;
+        let _ = self.persist_db(db.clone()).await;
+    }
+
     async fn complete(
         &mut self,
         order: &MktOrder,
@@ -399,6 +404,11 @@ impl Transactions {
                     );
                     let order_ids = &transaction.orders[1..];
                     let orders = self.mktorders.load_from_db(order_ids).await?;
+                    if orders.is_empty() {
+                        transaction.zombie(&self.db).await;
+                        continue;
+                    }
+
                     let filled_quantity: i64 = orders
                         .iter()
                         .map(|order| {
@@ -529,19 +539,8 @@ impl Transactions {
 
     pub async fn activate_stop(&mut self, symbol: &str) {
         if let Some(transaction) = self.transactions.get_mut(symbol) {
-            self.locker.revive(transaction.locker).await;
-        } else {
-            warn!(
-                "Unable to update locker, transaction not found for symbol: {}",
-                symbol
-            );
-        }
-    }
-
-    pub async fn reactivate_stop(&mut self, symbol: &str) {
-        if let Some(transaction) = self.transactions.get_mut(symbol) {
-            self.locker.revive(transaction.locker).await;
-            info!("Locker tracking symbol: {} re-enabled", symbol);
+            self.locker.activate(transaction.locker).await;
+            info!("Locker tracking symbol: {} activated", symbol);
         } else {
             warn!(
                 "Unable to update locker, transaction not found for symbol: {}",

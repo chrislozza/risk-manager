@@ -1,3 +1,4 @@
+use anyhow::bail;
 use anyhow::Ok;
 use anyhow::Result;
 use sqlx::postgres::PgPoolOptions;
@@ -100,9 +101,10 @@ impl DBClient {
         {
             std::result::Result::Ok(pool) => pool,
             std::result::Result::Err(err) => {
-                panic!(
+                bail!(
                     "Failed to startup db connection pool with url: {} error={}",
-                    database_url, err
+                    database_url,
+                    err
                 );
             }
         };

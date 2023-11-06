@@ -90,7 +90,7 @@ impl MktData {
         .init(symbol, start_date, end_date, bars::TimeFrame::OneDay);
 
         let result = self.connectors.get_historical_bars(&request).await?;
-        Ok(result.bars)
+        anyhow::Result::Ok(result.bars)
     }
 
     pub async fn startup(&mut self, symbols: Vec<String>) -> Result<()> {
@@ -103,7 +103,7 @@ impl MktData {
             self.batch_subscribe(symbols).await?
         }
         info!("Mktdata startup complete");
-        Ok(())
+        anyhow::Result::Ok(())
     }
 
     async fn batch_subscribe(&self, symbols: Vec<String>) -> Result<()> {
@@ -115,7 +115,7 @@ impl MktData {
         let symbols = vec![symbol.to_string()];
         self.batch_subscribe(symbols).await?;
         self.snapshots.insert(symbol.to_string(), None);
-        Ok(())
+        anyhow::Result::Ok(())
     }
 
     pub async fn unsubscribe(&mut self, symbol: &str) -> Result<()> {
@@ -124,7 +124,7 @@ impl MktData {
             .unsubscribe_from_symbols(vec![symbol.to_string()].into())
             .await?;
         self.snapshots.remove(symbol);
-        Ok(())
+        anyhow::Result::Ok(())
     }
 
     pub fn get_snapshots(&mut self) -> HashMap<String, Snapshot> {

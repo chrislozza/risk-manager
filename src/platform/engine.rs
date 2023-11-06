@@ -231,7 +231,7 @@ impl Engine {
                         self.handle_closing_position(&symbol, order_id, direction)
                             .await
                     }
-                    None => self.transactions.reactivate_stop(&symbol).await,
+                    None => self.transactions.activate_stop(&symbol).await,
                 },
                 TransactionStatus::Cancelled => {
                     warn!("Ignoring mktdata update for cancelled transaction")
@@ -248,7 +248,7 @@ impl Engine {
         match self.order_handler.cancel_order(&order_id).await {
             Err(error) => {
                 error!("Dropping order cancel, failed to send to server, error={error}");
-                self.transactions.reactivate_stop(symbol).await
+                self.transactions.activate_stop(symbol).await
             }
             _ => self.transactions.stop_complete(symbol).await,
         }
@@ -269,18 +269,14 @@ impl Engine {
         let order_id = order_update.order.id.0;
         info!("{:?}", order_update.order);
         match order_update.event {
-            updates::OrderStatus::New => {
-                self.handle_new(order_id).await?;
+            updates::OrderStatus::New => self.handle_new(order_id).await,
+            updates::OrderStatus::Filled => self.handle_fill(order_id).await,
+            updates::OrderStatus::Canceled => self.handle_cancel_reject(order_id).await,
+            _ => {
+                info!("Not listening to event {:?}", order_update.event);
+                Ok(())
             }
-            updates::OrderStatus::Filled => {
-                self.handle_fill(order_id).await?;
-            }
-            updates::OrderStatus::Canceled => {
-                self.handle_cancel_reject(order_id).await?;
-            }
-            _ => info!("Not listening to event {:?}", order_update.event),
         }
-        Ok(())
     }
 
     async fn handle_cancel_reject(&mut self, order_id: Uuid) -> Result<()> {
@@ -290,13 +286,13 @@ impl Engine {
 
             match order.action {
                 OrderAction::Create => match self.transactions.cancel_transaction(order_id).await {
-                    Err(err) => {
+                    anyhow::Result::Err(err) => {
                         error!("Failed to cancel transaction, error={}", err);
                         bail!("{}", err)
                     }
                     _ => self.mktdata.lock().await.unsubscribe(&symbol).await?,
                 },
-                OrderAction::Liquidate => self.transactions.reactivate_stop(&symbol).await,
+                OrderAction::Liquidate => self.transactions.activate_stop(&symbol).await,
             }
         } else {
             warn!("Order with Id: {}, not found in db", order_id);

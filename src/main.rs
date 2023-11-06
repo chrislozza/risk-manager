@@ -87,7 +87,7 @@ async fn main() {
 
     info!("Found key: {key}, secret: {secret}");
 
-    let mut platform = Platform::new(
+    let mut platform = match Platform::new(
         settings.clone(),
         &key,
         &secret,
@@ -95,10 +95,20 @@ async fn main() {
         shutdown_signal.clone(),
     )
     .await
-    .unwrap();
-    let mut publisher = EventPublisher::new(shutdown_signal.clone(), settings)
-        .await
-        .unwrap();
+    {
+        Ok(platform) => platform,
+        Err(err) => {
+            error!("Failed to startup platform, error={}", err);
+            std::process::exit(1);
+        }
+    };
+    let mut publisher = match EventPublisher::new(shutdown_signal.clone(), settings).await {
+        Ok(publisher) => publisher,
+        Err(err) => {
+            error!("Failed to startup event publisher, error={}", err);
+            std::process::exit(1);
+        }
+    };
     info!("Initialised components");
 
     match platform.startup().await {
@@ -110,8 +120,14 @@ async fn main() {
     };
     let mut publisher_events = publisher.startup().await;
     let mut is_graceful_shutdown = false;
-    let _ = platform.run().await;
-    let _ = publisher.run().await;
+    if let Err(err) = platform.run().await {
+        error!("Failed to initiate run for platform, error={}", err);
+        std::process::exit(1);
+    }
+    if let Err(err) = publisher.run().await {
+        error!("Failed to initiate run for publisher, error={}", err);
+        std::process::exit(1);
+    }
 
     let mut sigterm = signal::unix::signal(signal::unix::SignalKind::terminate()).unwrap();
     loop {

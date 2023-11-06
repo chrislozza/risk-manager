@@ -74,7 +74,7 @@ impl Connectors {
             .send_request::<assets::Get>(&self.client, request)
             .await
         {
-            Err(err) => bail!("Call to get_assets failed, error={}", err),
+            anyhow::Result::Err(err) => bail!("Call to get_assets failed, error={}", err),
             val => val,
         }
     }
@@ -86,7 +86,7 @@ impl Connectors {
             .send_request::<account::Get>(&self.client, &())
             .await
         {
-            Err(err) => bail!("Call to get_account_details failed, error={}", err),
+            anyhow::Result::Err(err) => bail!("Call to get_account_details failed, error={}", err),
             val => val,
         }
     }
@@ -99,7 +99,7 @@ impl Connectors {
             .send_request::<order::Get>(&self.client, &Id(order_id))
             .await
         {
-            Err(err) => bail!("Call to get_order failed, error={}", err),
+            anyhow::Result::Err(err) => bail!("Call to get_order failed, error={}", err),
             val => val,
         }
     }
@@ -115,7 +115,7 @@ impl Connectors {
             .send_request::<orders::Get>(&self.client, &request)
             .await
         {
-            Err(err) => bail!("Call to get_orders failed, error={}", err),
+            anyhow::Result::Err(err) => bail!("Call to get_orders failed, error={}", err),
             val => val,
         }
     }
@@ -132,7 +132,7 @@ impl Connectors {
             .send_request::<position::Get>(&self.client, &symbol_exchange)
             .await
         {
-            Err(err) => bail!("Call to get_position failed, error={}", err),
+            anyhow::Result::Err(err) => bail!("Call to get_position failed, error={}", err),
             val => val,
         }
     }
@@ -144,7 +144,7 @@ impl Connectors {
             .send_request::<positions::Get>(&self.client, &())
             .await
         {
-            Err(err) => bail!("Call to get_positions failed, error={}", err),
+            anyhow::Result::Err(err) => bail!("Call to get_positions failed, error={}", err),
             val => val,
         }
     }
@@ -156,7 +156,7 @@ impl Connectors {
             .send_request::<order::Post>(&self.client, request)
             .await
         {
-            Err(err) => bail!("Call to place_order failed, error={}", err),
+            anyhow::Result::Err(err) => bail!("Call to place_order failed, error={}", err),
             val => val,
         }
     }
@@ -168,8 +168,8 @@ impl Connectors {
             .send_request::<order::Delete>(&self.client, id)
             .await
         {
-            Err(err) => bail!("Call to cancel_order failed, error={}", err),
-            val => val,
+            anyhow::Result::Err(err) => bail!("Call to cancel_order failed, error={}", err),
+            _ => Ok(()),
         }
     }
 
@@ -180,7 +180,7 @@ impl Connectors {
             .send_request::<position::Delete>(&self.client, symbol)
             .await
         {
-            Err(err) => bail!("Call to close_position failed, error={}", err),
+            anyhow::Result::Err(err) => bail!("Call to close_position failed, error={}", err),
             val => val,
         }
     }
@@ -192,7 +192,7 @@ impl Connectors {
             .send_request::<bars::Get>(&self.client, request)
             .await
         {
-            Err(err) => bail!("Call to get_historical_bars failed, error={}", err),
+            anyhow::Result::Err(err) => bail!("Call to get_historical_bars failed, error={}", err),
             val => val,
         }
     }
@@ -200,16 +200,18 @@ impl Connectors {
     pub async fn subscribe_to_symbols(&self, symbols: stream::SymbolList) -> Result<()> {
         info!("Request subscribe_to_symbols");
         match self.websocket.subscribe_to_mktdata(symbols).await {
-            Err(err) => bail!("Call to subscribe_to_symbols failed, error={}", err),
-            val => val,
+            anyhow::Result::Err(err) => bail!("Call to subscribe_to_symbols failed, error={}", err),
+            _ => Ok(()),
         }
     }
 
     pub async fn unsubscribe_from_symbols(&self, symbols: stream::SymbolList) -> Result<()> {
         info!("Request unsubscribe_from_symbols");
         match self.websocket.unsubscribe_from_mktdata(symbols).await {
-            Err(err) => bail!("Call to unsubscribe_from_symbols failed, error={}", err),
-            anyhow::Result::Ok(val) => Ok(val),
+            anyhow::Result::Err(err) => {
+                bail!("Call to unsubscribe_from_symbols failed, error={}", err)
+            }
+            _ => Ok(()),
         }
     }
 }
