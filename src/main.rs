@@ -42,6 +42,12 @@ struct Args {
     settings: String,
 }
 
+fn graceful_shutdown(is_graceful_shutdown: &mut bool, shutdown_signal: &CancellationToken) {
+    *is_graceful_shutdown = true;
+    info!("Graceful shutdown initiated");
+    shutdown_signal.cancel();
+}
+
 #[tokio::main]
 async fn main() {
     let cmdline_args = Args::parse();
@@ -106,6 +112,8 @@ async fn main() {
     let mut is_graceful_shutdown = false;
     let _ = platform.run().await;
     let _ = publisher.run().await;
+
+    let mut sigterm = signal::unix::signal(signal::unix::SignalKind::terminate()).unwrap();
     loop {
         tokio::select! {
             event = publisher_events.recv() => {
@@ -133,10 +141,11 @@ async fn main() {
                     std::process::exit(1)
                 }
             }
+            _ = sigterm.recv() => {
+                graceful_shutdown(&mut is_graceful_shutdown, &shutdown_signal);
+            }
             _ = signal::ctrl_c() => {
-                is_graceful_shutdown = true;
-                info!("Graceful shutdown initiated");
-                shutdown_signal.cancel();
+                graceful_shutdown(&mut is_graceful_shutdown, &shutdown_signal);
             }
             _ = sleep(Duration::from_secs(120)) => {
                 info!("Printing status updates");

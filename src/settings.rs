@@ -38,7 +38,7 @@ pub struct ProcessLaunchSettings {
 
 #[derive(Default, Clone, Debug, Deserialize)]
 pub struct PositionSizing {
-    pub risk_tolerance: f32,
+    pub risk: f32,
     pub multiplier: f32,
 }
 

@@ -167,7 +167,7 @@ impl Engine {
         number_of_strategies: usize,
         mktdata: &Arc<Mutex<MktData>>,
     ) -> Result<Num> {
-        let risk_tolerance = to_num!(sizing.risk_tolerance);
+        let risk_tolerance = to_num!(sizing.risk);
         let total_equity_per_strategy = total_equity / number_of_strategies;
         let risk_per_trade = total_equity_per_strategy * risk_tolerance;
         let atr = TechnnicalSignals::get_atr(symbol, mktdata).await?;

@@ -30,8 +30,15 @@ impl OrderHandler {
         position_size: Num,
         side: Side,
     ) -> Result<Uuid> {
-        let limit_price = target_price.clone() * to_num!(1.07);
-        let stop_price = target_price * to_num!(1.01);
+        let limit_price = match side {
+            Side::Buy => target_price.clone() * to_num!(1.07),
+            Side::Sell => target_price.clone() * to_num!(0.93),
+        };
+        let stop_price = match side {
+            Side::Buy => target_price * to_num!(1.01),
+            Side::Sell => target_price * to_num!(0.99),
+        };
+
         let amount = order::Amount::quantity(position_size.round());
         let side = Self::convert_side(side);
         info!(
