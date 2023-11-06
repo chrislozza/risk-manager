@@ -147,7 +147,10 @@ impl Stop {
         mktdata: &Arc<Mutex<MktData>>,
     ) -> Num {
         match self {
-            Stop::Atr(atr) => atr.price_update(symbol, last_price, mktdata).await,
+            Stop::Atr(atr) => {
+                atr.price_update(symbol, entry_price, last_price, mktdata)
+                    .await
+            }
             Stop::Smart(trailing) => {
                 trailing
                     .price_update(strategy, symbol, entry_price, last_price)
@@ -433,9 +436,8 @@ impl Locker {
         }
     }
 
-    pub async fn revive(&mut self, locker_id: Uuid) {
+    pub async fn activate(&mut self, locker_id: Uuid) {
         if let Some(stop) = self.stops.get_mut(&locker_id) {
-            info!("Locker tracking symbol: {} being revived", stop.symbol);
             stop.status = LockerStatus::Active;
             stop.persist_to_db(&self.db).await.unwrap();
         }
@@ -448,10 +450,14 @@ impl Locker {
         }
     }
 
-    pub async fn should_close(&mut self, locker_id: &Uuid, snapshot: &Snapshot) -> bool {
+    pub async fn should_close(
+        &mut self,
+        symbol: &str,
+        locker_id: &Uuid,
+        snapshot: &Snapshot,
+    ) -> Result<bool> {
         if !self.stops.contains_key(locker_id) {
-            info!("Symbol: {locker_id:?} not being tracked in locker");
-            return false;
+            bail!("Symbol: {symbol} with {locker_id:?} not being tracked in locker");
         }
 
         async fn check_should_close(
@@ -502,9 +508,9 @@ impl Locker {
                     "Closing transaction: {} as last price: {} has crossed the stop price: {}",
                     smart.symbol, snapshot, stop_price,
                 );
-                return true;
+                return Ok(true);
             }
         }
-        false
+        Ok(false)
     }
 }

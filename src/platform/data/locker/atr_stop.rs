@@ -45,7 +45,7 @@ impl AtrStop {
         daily_atr: Num,
     ) -> Self {
         let multiplier = to_num!(multiplier);
-        let atr_stop = (daily_atr.clone() * multiplier.clone());
+        let atr_stop = daily_atr.clone() * multiplier.clone();
         let stop_price = match direction {
             Direction::Long => entry_price - atr_stop.clone(),
             Direction::Short => entry_price + atr_stop.clone(),
@@ -142,6 +142,7 @@ impl AtrStop {
             let atr_stop = self.daily_atr.clone() * self.multiplier.clone();
             self.pivot_points = Self::calculate_pivot_points(atr_stop.to_f64().unwrap());
         }
+        let daily_atr = self.daily_atr.to_f64().unwrap();
         let price = last_price.to_f64().unwrap();
         let price_change = price - self.watermark.to_f64().unwrap();
         if price_change <= 0.0 {
@@ -157,7 +158,7 @@ impl AtrStop {
                         4 => {
                             if price > (entry_price * (1.0 + zone_watermark)) {
                                 // final trail at 1%
-                                stop_loss_level = price - (entry_price * 0.01)
+                                stop_loss_level = price - (daily_atr * 2.0)
                             } else {
                                 // close distance X% -> 1%
                                 stop_loss_level += price_change * new_trail_factor
@@ -177,7 +178,7 @@ impl AtrStop {
                         4 => {
                             if price < (entry_price * (1.0 - zone_watermark)) {
                                 // final trail at 1%
-                                stop_loss_level = price + (entry_price * 0.01)
+                                stop_loss_level = price + (daily_atr * 2.0)
                             } else {
                                 // close distance X% -> 1%
                                 stop_loss_level -= price_change * new_trail_factor
@@ -203,7 +204,7 @@ impl AtrStop {
                 }
             }
             self.stop_price = self.calculate_atr_stop(last_price.clone());
-            self.watermark = self.get_water_mark(last_price);
+            self.watermark = self.get_water_mark(last_price.clone());
         }
         self.last_price = last_price.clone();
         self.stop_price.clone()

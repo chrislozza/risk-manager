@@ -173,6 +173,7 @@ impl Transaction {
                 if order.status.eq(&OrderStatus::Filled) {
                     self.entry_time = order.fill_time;
                     self.entry_price = order.fill_price.clone();
+                    self.quantity = order.quantity.clone();
                     if self.status.eq(&TransactionStatus::Waiting) {
                         self.status = TransactionStatus::Confirmed;
                     }
@@ -202,6 +203,11 @@ impl Transaction {
     async fn cancel(&mut self, order: &MktOrder, db: &Arc<DBClient>) {
         self.status = TransactionStatus::Cancelled;
         self.update_from_order(order, db).await;
+    }
+
+    async fn zombie(&mut self, db: &Arc<DBClient>) {
+        self.status = TransactionStatus::Cancelled;
+        let _ = self.persist_db(db.clone()).await;
     }
 
     async fn complete(
@@ -399,6 +405,11 @@ impl Transactions {
                     );
                     let order_ids = &transaction.orders[1..];
                     let orders = self.mktorders.load_from_db(order_ids).await?;
+                    if !order_ids.is_empty() && orders.is_empty() {
+                        transaction.zombie(&self.db).await;
+                        continue;
+                    }
+
                     let filled_quantity: i64 = orders
                         .iter()
                         .map(|order| {
@@ -445,7 +456,6 @@ impl Transactions {
     pub async fn print_active_transactions(&mut self) -> Result<()> {
         let _ = self.mktorders.update_orders().await?;
 
-        info!("Printing transactions");
         for transaction in &mut self.transactions.values_mut() {
             match transaction.status {
                 TransactionStatus::Cancelled | TransactionStatus::Waiting => {
@@ -529,19 +539,8 @@ impl Transactions {
 
     pub async fn activate_stop(&mut self, symbol: &str) {
         if let Some(transaction) = self.transactions.get_mut(symbol) {
-            self.locker.revive(transaction.locker).await;
-        } else {
-            warn!(
-                "Unable to update locker, transaction not found for symbol: {}",
-                symbol
-            );
-        }
-    }
-
-    pub async fn reactivate_stop(&mut self, symbol: &str) {
-        if let Some(transaction) = self.transactions.get_mut(symbol) {
-            self.locker.revive(transaction.locker).await;
-            info!("Locker tracking symbol: {} re-enabled", symbol);
+            self.locker.activate(transaction.locker).await;
+            info!("Locker tracking symbol: {} activated", symbol);
         } else {
             warn!(
                 "Unable to update locker, transaction not found for symbol: {}",
@@ -689,19 +688,29 @@ impl Transactions {
         snapshots: &HashMap<String, Snapshot>,
     ) -> Vec<Transaction> {
         let mut to_close: Vec<Transaction> = Vec::new();
-        for transaction in self.transactions.values() {
+        for (_, transaction) in self.transactions.clone() {
             let symbol = &transaction.symbol;
             debug!(
                 "Checking has stop crossed before has transaction type symbol: {}",
                 symbol
             );
             if let Some(snapshot) = snapshots.get(symbol) {
-                if self
+                match self
                     .locker
-                    .should_close(&transaction.locker, snapshot)
+                    .should_close(symbol, &transaction.locker, snapshot)
                     .await
                 {
-                    to_close.push(transaction.clone());
+                    anyhow::Result::Ok(result) => {
+                        if result {
+                            to_close.push(transaction.clone());
+                        }
+                    }
+                    anyhow::Result::Err(err) => {
+                        warn!("Locker check failed, err={err}");
+                        let _ = self
+                            .cancel_transaction(*transaction.orders.first().unwrap())
+                            .await;
+                    }
                 }
             }
         }

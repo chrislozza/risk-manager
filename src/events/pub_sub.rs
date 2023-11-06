@@ -1,5 +1,4 @@
 use anyhow::Result;
-use google_cloud_default::WithAuthExt;
 use google_cloud_pubsub::client::Client;
 use google_cloud_pubsub::client::ClientConfig;
 use std::collections::HashMap;

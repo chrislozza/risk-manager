@@ -58,7 +58,11 @@ impl fmt::Display for MktPosition {
         write!(
             f,
             "Position strategy[{}], symbol[{}] avgPrice[{}], size[{}], pnl[{}]",
-            self.strategy, self.symbol, self.avg_price, self.quantity, self.pnl
+            self.strategy,
+            self.symbol,
+            self.avg_price.round_with(3),
+            self.quantity,
+            self.pnl.round_with(3)
         )
     }
 }
